@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Zap, Leaf, Brush, Trash2, Wrench, Clock, CheckCircle2,
-  MapPin, ChevronRight, X, Plus, LayoutDashboard, ClipboardList,
+  MapPin, ChevronRight, X, Plus, ClipboardList,
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw
 } from 'lucide-react';
@@ -721,104 +721,7 @@ function PhotoUpload({
   );
 }
 
-/* ─── Dashboard Component ─── */
 
-function Dashboard({ workOrders }: { workOrders: WorkOrder[] }) {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100">
-          <Clock className="text-red-500 mb-2" size={20} />
-          <div className="text-3xl font-black">{workOrders.filter(o => o.status === 'Pendiente').length}</div>
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pendientes</div>
-        </div>
-        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100">
-          <CheckCircle2 className="text-emerald-500 mb-2" size={20} />
-          <div className="text-3xl font-black">{workOrders.filter(o => o.status === 'Terminada').length}</div>
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Listas</div>
-        </div>
-      </div>
-
-      <div className="bg-slate-900 rounded-[40px] p-8 text-white">
-        <h3 className="font-black text-lg mb-4 uppercase">Recientes</h3>
-        <div className="space-y-3">
-          {workOrders.slice(0, 3).map(ot => (
-            <div key={ot.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
-              <div className="truncate pr-4">
-                <p className="font-bold text-sm uppercase truncate">{(ot.activities ?? []).join(', ')}</p>
-                <p className="text-[10px] text-white/40 uppercase">{ot.zoneName} · {(ot.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}</p>
-              </div>
-              <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase ${STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}>
-                {ot.status}
-              </div>
-            </div>
-          ))}
-          {workOrders.length === 0 && <p className="text-white/30 text-xs italic text-center py-4">No hay registros.</p>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─── OTList Component ─── */
-
-function OTList({
-  workOrders,
-  onCreateFromCategory,
-  onEditOT,
-}: {
-  workOrders: WorkOrder[];
-  onCreateFromCategory: (name: string) => void;
-  onEditOT: (ot: WorkOrder) => void;
-}) {
-  return (
-    <div className="space-y-6">
-      <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
-        {CATEGORIES.map(cat => {
-          const IconComp = cat.icon;
-          return (
-            <button key={cat.id} onClick={() => onCreateFromCategory(cat.name)} className="flex-shrink-0 flex flex-col items-center gap-2">
-              <div className={`${cat.color} w-14 h-14 rounded-2xl flex items-center justify-center text-white shadow-lg active:scale-90 transition-transform`}>
-                <IconComp size={20} />
-              </div>
-              <span className="text-[8px] font-black uppercase text-slate-500">{cat.name}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="space-y-4">
-        {workOrders.map(ot => (
-          <div
-            key={ot.id}
-            onClick={() => onEditOT(ot)}
-            className="bg-white p-5 rounded-[32px] border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer relative overflow-hidden"
-          >
-            <div className={`absolute left-0 top-0 bottom-0 w-1 ${STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}></div>
-            <div className="flex-1 truncate pr-4 pl-2">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
-                <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
-              </div>
-              <h4 className="font-black text-slate-800 uppercase truncate">{(ot.activities ?? []).join(', ')}</h4>
-              <div className="flex items-center gap-3 mt-1">
-                <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                  <MapPin size={10} className="text-blue-500" /> {ot.zoneName}
-                </p>
-                {(ot.collaborators ?? []).length > 0 && (
-                  <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                    <User size={10} className="text-purple-500" /> {(ot.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}
-                  </p>
-                )}
-              </div>
-            </div>
-            <ChevronRight className="text-slate-300" size={20} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 /* ─── Modal Component ─── */
 
@@ -1313,11 +1216,13 @@ async function buildPDF(ot: Partial<WorkOrder>) {
   doc.save(`OT_${ot.otId ?? 'Reporte'}_Reporte.pdf`);
 }
 
-/* ─── Main App ─── */
+/* ─── Main App (Unified Single Page) ─── */
+
+type StatusFilter = 'Todas' | 'Pendiente' | 'En Proceso' | 'Terminada';
 
 export default function LagunaNorteApp() {
   const { workOrders, loading, syncing, apiAvailable, lastSync, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders();
-  const [view, setView] = useState<'dashboard' | 'ots'>('dashboard');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('Todas');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
 
@@ -1361,6 +1266,16 @@ export default function LagunaNorteApp() {
     buildPDF(ot);
   }, []);
 
+  // Counts
+  const pendientes = workOrders.filter(o => o.status === 'Pendiente').length;
+  const enProceso = workOrders.filter(o => o.status === 'En Proceso').length;
+  const terminadas = workOrders.filter(o => o.status === 'Terminada').length;
+
+  // Filtered OTs
+  const filteredOTs = statusFilter === 'Todas'
+    ? workOrders
+    : workOrders.filter(o => o.status === statusFilter);
+
   // Show loading spinner while initial data is being fetched
   if (loading) {
     return (
@@ -1374,8 +1289,9 @@ export default function LagunaNorteApp() {
   }
 
   return (
-    <div className="max-w-xl mx-auto min-h-screen pb-32 bg-slate-50">
-      <header className="p-6 bg-white border-b border-slate-100 sticky top-0 z-40 flex justify-between items-center shadow-sm">
+    <div className="max-w-xl mx-auto min-h-screen pb-24 bg-slate-50">
+      {/* ─── Header ─── */}
+      <header className="p-4 bg-white border-b border-slate-100 sticky top-0 z-40 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
           <img src="/logo-laguna.jpg" alt="Laguna Norte" className="h-10 rounded-lg" />
           <div>
@@ -1392,27 +1308,113 @@ export default function LagunaNorteApp() {
         </div>
       </header>
 
-      <main className="p-6">
-        {view === 'dashboard' ? (
-          <Dashboard workOrders={workOrders} />
-        ) : (
-          <OTList workOrders={workOrders} onCreateFromCategory={handleCreateFromCategory} onEditOT={handleEditOT} />
-        )}
+      <main className="p-4 space-y-5">
+        {/* ─── Stats Chips ─── */}
+        <div className="flex gap-3">
+          <div className="flex-1 bg-red-50 border border-red-100 p-3 rounded-2xl flex items-center gap-2">
+            <Clock className="text-red-500 flex-shrink-0" size={16} />
+            <div>
+              <div className="text-xl font-black text-red-600 leading-none">{pendientes}</div>
+              <div className="text-[8px] font-bold text-red-400 uppercase tracking-wider">Pendientes</div>
+            </div>
+          </div>
+          <div className="flex-1 bg-amber-50 border border-amber-100 p-3 rounded-2xl flex items-center gap-2">
+            <Zap className="text-amber-500 flex-shrink-0" size={16} />
+            <div>
+              <div className="text-xl font-black text-amber-600 leading-none">{enProceso}</div>
+              <div className="text-[8px] font-bold text-amber-400 uppercase tracking-wider">En Proceso</div>
+            </div>
+          </div>
+          <div className="flex-1 bg-emerald-50 border border-emerald-100 p-3 rounded-2xl flex items-center gap-2">
+            <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={16} />
+            <div>
+              <div className="text-xl font-black text-emerald-600 leading-none">{terminadas}</div>
+              <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider">Listas</div>
+            </div>
+          </div>
+        </div>
+
+        {/* ─── Quick Create Categories ─── */}
+        <div>
+          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Crear OT rápida</p>
+          <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
+            {CATEGORIES.map(cat => {
+              const IconComp = cat.icon;
+              return (
+                <button key={cat.id} onClick={() => handleCreateFromCategory(cat.name)} className="flex-shrink-0 flex flex-col items-center gap-1.5 active:scale-90 transition-transform">
+                  <div className={`${cat.color} w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg`}>
+                    <IconComp size={18} />
+                  </div>
+                  <span className="text-[7px] font-black uppercase text-slate-500">{cat.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ─── Status Filter Tabs ─── */}
+        <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl">
+          {(['Todas', 'Pendiente', 'En Proceso', 'Terminada'] as StatusFilter[]).map(s => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`flex-1 py-2 px-1 rounded-xl text-[9px] font-black uppercase transition-all ${
+                statusFilter === s
+                  ? 'bg-white text-slate-800 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              {s === 'Todas' ? `Todas (${workOrders.length})` : s}
+            </button>
+          ))}
+        </div>
+
+        {/* ─── Work Order List ─── */}
+        <div className="space-y-3">
+          {filteredOTs.map(ot => (
+            <div
+              key={ot.id}
+              onClick={() => handleEditOT(ot)}
+              className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer relative overflow-hidden active:scale-[0.98] transition-transform"
+            >
+              <div className={`absolute left-0 top-0 bottom-0 w-1 ${STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}></div>
+              <div className="flex-1 truncate pr-3 pl-2">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
+                  <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
+                  <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
+                </div>
+                <h4 className="font-black text-slate-800 uppercase truncate text-sm">{(ot.activities ?? []).join(', ')}</h4>
+                <div className="flex items-center gap-3 mt-0.5">
+                  <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                    <MapPin size={10} className="text-blue-500" /> {ot.zoneName}
+                  </p>
+                  {(ot.collaborators ?? []).length > 0 && (
+                    <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                      <User size={10} className="text-purple-500" /> {(ot.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <ChevronRight className="text-slate-300 flex-shrink-0" size={18} />
+            </div>
+          ))}
+          {filteredOTs.length === 0 && (
+            <div className="text-center py-12">
+              <ClipboardList className="mx-auto text-slate-200 mb-3" size={40} />
+              <p className="text-slate-300 text-xs font-bold uppercase">No hay órdenes {statusFilter === 'Todas' ? '' : statusFilter.toLowerCase()}</p>
+            </div>
+          )}
+        </div>
       </main>
 
-      <nav className="fixed bottom-6 left-6 right-6 bg-white/80 backdrop-blur-xl rounded-[32px] p-4 flex justify-around items-center shadow-2xl border border-white z-50">
-        <button onClick={() => setView('dashboard')} className={`flex flex-col items-center gap-1 ${view === 'dashboard' ? 'text-blue-600' : 'text-slate-300'}`}>
-          <LayoutDashboard size={20} />
-          <span className="text-[8px] font-black uppercase">Inicio</span>
-        </button>
-        <button onClick={handleOpenNew} className="w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-xl shadow-blue-200 -mt-10 border-4 border-white active:scale-90 transition-transform">
-          <Plus size={24} />
-        </button>
-        <button onClick={() => setView('ots')} className={`flex flex-col items-center gap-1 ${view === 'ots' ? 'text-blue-600' : 'text-slate-300'}`}>
-          <ClipboardList size={20} />
-          <span className="text-[8px] font-black uppercase">Listado</span>
-        </button>
-      </nav>
+      {/* ─── Floating Action Button ─── */}
+      <button
+        onClick={handleOpenNew}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-300/50 active:scale-90 transition-transform z-50"
+      >
+        <Plus size={28} />
+      </button>
 
       <Modal
         isOpen={isModalOpen}
