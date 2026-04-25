@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import {
   Zap, Leaf, Brush, Trash2, Wrench, Clock, CheckCircle2,
   MapPin, ChevronRight, X, Plus, LayoutDashboard, ClipboardList,
@@ -89,6 +89,23 @@ function loadWorkOrders(): WorkOrder[] {
     console.error('Error al leer localStorage:', e);
   }
   return [];
+}
+
+// useSyncExternalStore helpers for localStorage-backed work orders
+// Server always returns [] to avoid hydration mismatch
+const emptyWorkOrders: WorkOrder[] = [];
+
+function subscribeToStorage(callback: () => void) {
+  window.addEventListener('storage', callback);
+  return () => window.removeEventListener('storage', callback);
+}
+
+function getStorageSnapshot(): WorkOrder[] {
+  return loadWorkOrders();
+}
+
+function getServerSnapshot(): WorkOrder[] {
+  return emptyWorkOrders;
 }
 
 function generateUniqueId(): string {
@@ -950,21 +967,35 @@ async function buildPDF(ot: Partial<WorkOrder>) {
   doc.save(`OT_${ot.otId ?? 'Reporte'}_Reporte.pdf`);
 }
 
+/* ─── Custom hook: localStorage work orders with SSR safety ─── */
+
+function useLocalStorageWorkOrders(): [WorkOrder[], (updater: React.SetStateAction<WorkOrder[]>) => void] {
+  // useSyncExternalStore: server returns [], client reads from localStorage
+  const storedOrders = useSyncExternalStore(subscribeToStorage, getStorageSnapshot, getServerSnapshot);
+
+  // Writer function that updates localStorage and triggers re-render via storage event
+  const setStoredOrders = useCallback((updater: React.SetStateAction<WorkOrder[]>) => {
+    try {
+      const current = loadWorkOrders();
+      const next = typeof updater === 'function' ? updater(current) : updater;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      // Trigger storage event so useSyncExternalStore re-reads
+      window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.error('Error al guardar en localStorage:', e);
+    }
+  }, []);
+
+  return [storedOrders, setStoredOrders];
+}
+
 /* ─── Main App ─── */
 
 export default function Home() {
   const [view, setView] = useState<'dashboard' | 'ots'>('dashboard');
-  const [workOrders, setWorkOrders] = useState<WorkOrder[]>(loadWorkOrders);
+  const [workOrders, setWorkOrders] = useLocalStorageWorkOrders();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(workOrders));
-    } catch (e) {
-      console.error('Error al guardar en localStorage:', e);
-    }
-  }, [workOrders]);
 
   const handleSaveOT = useCallback((data: Partial<WorkOrder>) => {
     if (data.id) {
@@ -987,13 +1018,13 @@ export default function Home() {
     }
     setIsModalOpen(false);
     setEditingItem(null);
-  }, []);
+  }, [setWorkOrders]);
 
   const handleDeleteOT = useCallback((id: string) => {
     setWorkOrders(prev => prev.filter(o => o.id !== id));
     setIsModalOpen(false);
     setEditingItem(null);
-  }, []);
+  }, [setWorkOrders]);
 
   const handleCreateFromCategory = useCallback((categoryName: string) => {
     setEditingItem({ activities: [categoryName], status: 'Pendiente', zoneName: '', collaborator: '', collaboratorRole: '', photosBefore: [], photosAfter: [] });
