@@ -1,14 +1,50 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Zap, Leaf, Brush, Trash2, Wrench, Clock, CheckCircle2,
   MapPin, ChevronRight, X, Plus, LayoutDashboard, ClipboardList,
-  Download
+  Download, ChevronDown, Search, User, Tag
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 
-/* ─── Constants ─── */
+/* ─── Data Lists ─── */
+
+interface Collaborator {
+  name: string;
+  role: string;
+}
+
+const COLLABORATORS: Collaborator[] = [
+  { name: 'Cesar Edmundo Adasme Aravena', role: 'Auxiliar de aseo Full Time' },
+  { name: 'Chris Esther Godoy Espinoza', role: 'Auxiliar de aseo Full Time' },
+  { name: 'Erik Alberto Arteaga Burgos', role: 'Auxiliar de aseo Full Time' },
+  { name: 'Irma Del Rosario Pinna Lopez', role: 'Auxiliar de aseo Full Time' },
+  { name: 'Marie Ginette Dorne', role: 'Auxiliar de aseo Full Time' },
+  { name: 'Jeantelus Fleurissaint', role: 'Auxiliar de servicios generales' },
+  { name: 'Luis Alejandro Torres Bustos', role: 'Auxiliar de servicios generales' },
+  { name: 'Nelson Enrique Lema Muñoz', role: 'Auxiliar de servicios generales' },
+  { name: 'Paulo César Toro Pino', role: 'Auxiliar de servicios generales' },
+  { name: 'Macario Enrique Manríquez Trigo', role: 'Lagunero' },
+  { name: 'Carlos Alberto Zamorano Torres', role: 'Mantenciones' },
+  { name: 'Francisco Marcial Fuentes Carrasco', role: 'Eléctrico' },
+  { name: 'Jose Luis Venegas Poblete', role: 'Mantenciones' },
+];
+
+const ZONES = [
+  'Club House', 'Piscina 1', 'Piscina 2', 'Piscina 3', 'Mirador',
+  'Muelle', 'Juegos Muelle', 'Quinchos', 'Multicancha', 'Cancha Sintética',
+  'Avenida Principal', 'Canquén', 'Albatros', 'Bandurrias', 'Becacinas',
+  'Flamencos', 'Faisanes', 'Garzas', 'Gaviotas', 'Otro',
+];
+
+const ACTIVITIES = [
+  'Corte De Pasto', 'Desmalezado', 'Poda de Arbustos', 'Barrido De Calles',
+  'Recolección De Basura', 'Reparación Eléctrica', 'Reparación Estructural',
+  'Limpieza De Piscina', 'Llenado De Piscina', 'Otro',
+];
+
+/* ─── Other constants ─── */
 
 const CATEGORIES = [
   { id: 'electrica', name: 'Eléctrica', icon: Zap, color: 'bg-yellow-500' },
@@ -24,8 +60,6 @@ const STATUS_CONFIG: Record<string, { color: string; text: string }> = {
   'Terminada': { color: 'bg-emerald-500', text: 'text-emerald-600' },
 };
 
-const ZONES = ['Portería', 'Áreas Verdes', 'Piscina', 'Club House', 'Canque', 'Avenida Principal', 'Muelle', 'Anfiteatro'] as const;
-
 const STORAGE_KEY = 'laguna_norte_ots';
 const COUNTER_KEY = 'laguna_norte_ot_counter';
 
@@ -34,10 +68,12 @@ const COUNTER_KEY = 'laguna_norte_ot_counter';
 interface WorkOrder {
   id: string;
   otId: string;
-  title: string;
+  activities: string[];
+  collaborator: string;
+  collaboratorRole: string;
+  zoneName: string;
   description: string;
   status: string;
-  zoneName: string;
   createdAt: number;
 }
 
@@ -72,6 +108,191 @@ function generateOTId(): string {
   return `OT-${String(counter).padStart(4, '0')}`;
 }
 
+/* ─── Custom Dropdown Component ─── */
+
+function Dropdown({
+  label,
+  icon: IconComp,
+  options,
+  selected,
+  onSelect,
+  placeholder,
+  searchable = false,
+}: {
+  label: string;
+  icon: React.ElementType;
+  options: { value: string; subtitle?: string }[];
+  selected: string;
+  onSelect: (value: string) => void;
+  placeholder: string;
+  searchable?: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const filtered = searchable && search.trim()
+    ? options.filter(o =>
+        o.value.toLowerCase().includes(search.toLowerCase()) ||
+        (o.subtitle && o.subtitle.toLowerCase().includes(search.toLowerCase()))
+      )
+    : options;
+
+  const selectedOption = options.find(o => o.value === selected);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">{label}</label>
+      <button
+        type="button"
+        onClick={() => { setIsOpen(!isOpen); setSearch(''); }}
+        className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-left flex items-center justify-between gap-2"
+      >
+        <span className={`truncate ${selectedOption ? 'text-slate-800' : 'text-slate-400'}`}>
+          {selectedOption ? (
+            <span className="flex flex-col">
+              <span className="truncate">{selectedOption.value}</span>
+              {selectedOption.subtitle && (
+                <span className="text-[9px] font-medium text-slate-400 normal-case truncate">{selectedOption.subtitle}</span>
+              )}
+            </span>
+          ) : placeholder}
+        </span>
+        <ChevronDown size={16} className={`text-slate-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 w-full mt-1 bg-white rounded-2xl shadow-xl border border-slate-100 max-h-56 overflow-hidden">
+          {searchable && (
+            <div className="p-2 border-b border-slate-100 sticky top-0 bg-white">
+              <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-xl">
+                <Search size={14} className="text-slate-400 flex-shrink-0" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Buscar..."
+                  className="bg-transparent text-sm font-medium w-full outline-none placeholder:text-slate-300"
+                  autoFocus
+                />
+              </div>
+            </div>
+          )}
+          <div className="overflow-y-auto max-h-40 no-scrollbar">
+            {filtered.map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => { onSelect(opt.value); setIsOpen(false); }}
+                className={`w-full px-4 py-3 text-left text-sm hover:bg-blue-50 transition-colors ${selected === opt.value ? 'bg-blue-50 text-blue-600 font-black' : 'text-slate-700 font-semibold'}`}
+              >
+                <span className="block truncate">{opt.value}</span>
+                {opt.subtitle && (
+                  <span className="block text-[9px] font-medium text-slate-400 normal-case truncate">{opt.subtitle}</span>
+                )}
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <p className="px-4 py-3 text-xs text-slate-400 italic">Sin resultados</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Multi-Select Activities Component ─── */
+
+function MultiSelectActivities({
+  selected,
+  onToggle,
+  customActivity,
+  onCustomActivityChange,
+  onAddCustom,
+}: {
+  selected: string[];
+  onToggle: (activity: string) => void;
+  customActivity: string;
+  onCustomActivityChange: (val: string) => void;
+  onAddCustom: () => void;
+}) {
+  return (
+    <div>
+      <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+        <Tag size={10} /> Actividades
+      </label>
+      <div className="flex flex-wrap gap-2 mt-2">
+        {ACTIVITIES.map(act => {
+          const isSelected = selected.includes(act);
+          const isOther = act === 'Otro';
+          return (
+            <button
+              key={act}
+              type="button"
+              onClick={() => { if (!isOther) onToggle(act); }}
+              className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
+                isSelected
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                  : isOther
+                    ? 'bg-slate-200 text-slate-500 cursor-default'
+                    : 'bg-slate-50 text-slate-400 border border-slate-100'
+              }`}
+            >
+              {act}
+            </button>
+          );
+        })}
+      </div>
+      {/* Custom activity input for "Otro" */}
+      <div className="flex gap-2 mt-3">
+        <input
+          type="text"
+          value={customActivity}
+          onChange={e => onCustomActivityChange(e.target.value)}
+          placeholder="Otra actividad..."
+          className="flex-1 p-3 rounded-xl bg-slate-50 border-none font-bold text-sm placeholder:text-slate-300"
+          onKeyDown={e => { if (e.key === 'Enter' && customActivity.trim()) { e.preventDefault(); onAddCustom(); } }}
+        />
+        <button
+          type="button"
+          onClick={onAddCustom}
+          disabled={!customActivity.trim()}
+          className="px-4 py-3 bg-slate-800 text-white rounded-xl font-black text-[10px] uppercase disabled:opacity-30 disabled:cursor-not-allowed active:scale-95 transition-transform"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+      {/* Selected activities summary */}
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-3">
+          {selected.map(act => (
+            <span
+              key={act}
+              className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[9px] font-black uppercase"
+            >
+              {act}
+              <button type="button" onClick={() => onToggle(act)} className="hover:text-red-500 transition-colors">
+                <X size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Dashboard Component ─── */
 
 function Dashboard({ workOrders }: { workOrders: WorkOrder[] }) {
@@ -96,8 +317,8 @@ function Dashboard({ workOrders }: { workOrders: WorkOrder[] }) {
           {workOrders.slice(0, 3).map(ot => (
             <div key={ot.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
               <div className="truncate pr-4">
-                <p className="font-bold text-sm uppercase truncate">{ot.title}</p>
-                <p className="text-[10px] text-white/40 uppercase">{ot.zoneName}</p>
+                <p className="font-bold text-sm uppercase truncate">{ot.activities.join(', ')}</p>
+                <p className="text-[10px] text-white/40 uppercase">{ot.zoneName} · {ot.collaborator.split(' ').slice(0, 2).join(' ')}</p>
               </div>
               <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase ${STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}>
                 {ot.status}
@@ -155,10 +376,17 @@ function OTList({
                 <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
                 <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
               </div>
-              <h4 className="font-black text-slate-800 uppercase truncate">{ot.title}</h4>
-              <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1 mt-1">
-                <MapPin size={10} className="text-blue-500" /> {ot.zoneName}
-              </p>
+              <h4 className="font-black text-slate-800 uppercase truncate">{ot.activities.join(', ')}</h4>
+              <div className="flex items-center gap-3 mt-1">
+                <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                  <MapPin size={10} className="text-blue-500" /> {ot.zoneName}
+                </p>
+                {ot.collaborator && (
+                  <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                    <User size={10} className="text-purple-500" /> {ot.collaborator.split(' ').slice(0, 2).join(' ')}
+                  </p>
+                )}
+              </div>
             </div>
             <ChevronRight className="text-slate-300" size={20} />
           </div>
@@ -186,17 +414,52 @@ function ModalInner({
   const [form, setForm] = useState(() => ({
     id: editingItem?.id,
     otId: editingItem?.otId,
-    title: editingItem?.title ?? '',
+    activities: editingItem?.activities ?? [],
+    collaborator: editingItem?.collaborator ?? '',
+    collaboratorRole: editingItem?.collaboratorRole ?? '',
+    zoneName: editingItem?.zoneName ?? '',
     description: editingItem?.description ?? '',
     status: editingItem?.status ?? 'Pendiente',
-    zoneName: editingItem?.zoneName ?? ZONES[0],
     createdAt: editingItem?.createdAt,
   }));
+  const [customActivity, setCustomActivity] = useState('');
   const [validationError, setValidationError] = useState('');
 
+  const collaboratorOptions = COLLABORATORS.map(c => ({ value: c.name, subtitle: c.role }));
+  const zoneOptions = ZONES.map(z => ({ value: z }));
+
+  const handleToggleActivity = (activity: string) => {
+    setForm(prev => ({
+      ...prev,
+      activities: prev.activities.includes(activity)
+        ? prev.activities.filter(a => a !== activity)
+        : [...prev.activities, activity],
+    }));
+    setValidationError('');
+  };
+
+  const handleAddCustomActivity = () => {
+    const trimmed = customActivity.trim();
+    if (trimmed && !form.activities.includes(trimmed)) {
+      setForm(prev => ({ ...prev, activities: [...prev.activities, trimmed] }));
+      setCustomActivity('');
+      setValidationError('');
+    }
+  };
+
+  const handleSelectCollaborator = (name: string) => {
+    const collab = COLLABORATORS.find(c => c.name === name);
+    setForm(prev => ({
+      ...prev,
+      collaborator: name,
+      collaboratorRole: collab?.role ?? '',
+    }));
+    setValidationError('');
+  };
+
   const handleSave = () => {
-    if (!form.title.trim()) {
-      setValidationError('La actividad es obligatoria');
+    if (form.activities.length === 0) {
+      setValidationError('Selecciona al menos una actividad');
       return;
     }
     if (!form.zoneName) {
@@ -215,47 +478,56 @@ function ModalInner({
           <button onClick={onClose} className="p-2 bg-slate-100 rounded-full"><X size={20} /></button>
         </div>
 
-        <div className="space-y-6">
-          <div>
-            <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Actividad</label>
-            <input
-              className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold"
-              placeholder="Nombre..."
-              value={form.title}
-              onChange={e => { setForm({ ...form, title: e.target.value }); setValidationError(''); }}
-            />
-          </div>
+        <div className="space-y-5">
+          {/* Multi-select Activities */}
+          <MultiSelectActivities
+            selected={form.activities}
+            onToggle={handleToggleActivity}
+            customActivity={customActivity}
+            onCustomActivityChange={setCustomActivity}
+            onAddCustom={handleAddCustomActivity}
+          />
 
+          {/* Collaborator dropdown */}
+          <Dropdown
+            label="Colaborador"
+            icon={User}
+            options={collaboratorOptions}
+            selected={form.collaborator}
+            onSelect={handleSelectCollaborator}
+            placeholder="Seleccionar colaborador..."
+            searchable
+          />
+
+          {/* Zone dropdown */}
+          <Dropdown
+            label="Zona"
+            icon={MapPin}
+            options={zoneOptions}
+            selected={form.zoneName}
+            onSelect={(z) => { setForm(prev => ({ ...prev, zoneName: z })); setValidationError(''); }}
+            placeholder="Seleccionar zona..."
+            searchable
+          />
+
+          {/* Observations */}
           <div>
             <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Observaciones</label>
             <textarea
               className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-medium text-sm min-h-[80px]"
               placeholder="..."
               value={form.description}
-              onChange={e => setForm({ ...form, description: e.target.value })}
+              onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))}
             />
           </div>
 
-          <div>
-            <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Zona</label>
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              {ZONES.map(z => (
-                <button
-                  key={z}
-                  onClick={() => setForm({ ...form, zoneName: z })}
-                  className={`p-3 rounded-xl border-2 text-[10px] font-black uppercase ${form.zoneName === z ? 'border-blue-600 bg-blue-50 text-blue-600' : 'border-slate-50 bg-slate-50 text-slate-400'}`}
-                >
-                  {z}
-                </button>
-              ))}
-            </div>
-          </div>
-
+          {/* Status */}
           <div className="flex gap-2">
             {Object.keys(STATUS_CONFIG).map(s => (
               <button
                 key={s}
-                onClick={() => setForm({ ...form, status: s })}
+                type="button"
+                onClick={() => setForm(prev => ({ ...prev, status: s }))}
                 className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase ${form.status === s ? `${STATUS_CONFIG[s].color} text-white` : 'bg-slate-100 text-slate-400'}`}
               >
                 {s}
@@ -268,6 +540,7 @@ function ModalInner({
           )}
 
           <button
+            type="button"
             onClick={handleSave}
             className="w-full py-5 bg-blue-600 text-white rounded-3xl font-black shadow-xl active:scale-95 transition-transform"
           >
@@ -277,12 +550,14 @@ function ModalInner({
           {editingItem?.id && (
             <div className="flex gap-2 pt-2 border-t">
               <button
+                type="button"
                 onClick={() => onGeneratePDF(editingItem)}
                 className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2"
               >
                 <Download size={14} /> PDF
               </button>
               <button
+                type="button"
                 onClick={() => onDelete(editingItem.id!)}
                 className="p-3 bg-red-50 text-red-500 rounded-xl"
               >
@@ -313,7 +588,6 @@ function Modal({
 }) {
   if (!isOpen) return null;
 
-  // Using key to reset ModalInner state when editingItem changes
   const modalKey = editingItem?.id ?? 'new';
 
   return (
@@ -351,10 +625,12 @@ export default function Home() {
       const newOT: WorkOrder = {
         id: generateUniqueId(),
         otId: generateOTId(),
-        title: data.title ?? '',
+        activities: data.activities ?? [],
+        collaborator: data.collaborator ?? '',
+        collaboratorRole: data.collaboratorRole ?? '',
+        zoneName: data.zoneName ?? '',
         description: data.description ?? '',
         status: data.status ?? 'Pendiente',
-        zoneName: data.zoneName ?? ZONES[0],
         createdAt: Date.now(),
       };
       setWorkOrders(prev => [newOT, ...prev]);
@@ -370,7 +646,7 @@ export default function Home() {
   }, []);
 
   const handleCreateFromCategory = useCallback((categoryName: string) => {
-    setEditingItem({ title: categoryName, status: 'Pendiente', zoneName: ZONES[0] });
+    setEditingItem({ activities: [categoryName], status: 'Pendiente', zoneName: '', collaborator: '', collaboratorRole: '' });
     setIsModalOpen(true);
   }, []);
 
@@ -403,17 +679,40 @@ export default function Home() {
     doc.line(20, 35, 190, 35);
 
     doc.setFontSize(14);
-    doc.text('REPORTE DE OPERACIÓN', 105, 50, { align: 'center' });
+    doc.text('REPORTE DE OPERACION', 105, 50, { align: 'center' });
     doc.setFontSize(10);
-    doc.text(`CÓDIGO: ${ot.otId ?? ''}`, 105, 57, { align: 'center' });
+    doc.text(`CODIGO: ${ot.otId ?? ''}`, 105, 57, { align: 'center' });
 
-    doc.text(`Actividad: ${ot.title ?? ''}`, 20, 75);
-    doc.text(`Zona: ${ot.zoneName ?? ''}`, 20, 82);
-    doc.text(`Estado: ${ot.status ?? ''}`, 20, 89);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Actividades:', 20, 70);
+    doc.setFont('helvetica', 'normal');
+    const actsText = (ot.activities ?? []).join(' / ') || 'Sin actividades';
+    const splitActs = doc.splitTextToSize(actsText, 170);
+    doc.text(splitActs, 20, 77);
 
-    doc.text('Detalle:', 20, 105);
+    const afterActs = 77 + splitActs.length * 5;
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Colaborador: ', 20, afterActs);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${ot.collaborator ?? ''} - ${ot.collaboratorRole ?? ''}`, 55, afterActs);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Zona: ', 20, afterActs + 7);
+    doc.setFont('helvetica', 'normal');
+    doc.text(ot.zoneName ?? '', 40, afterActs + 7);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Estado: ', 20, afterActs + 14);
+    doc.setFont('helvetica', 'normal');
+    doc.text(ot.status ?? '', 47, afterActs + 14);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Detalle:', 20, afterActs + 24);
+    doc.setFont('helvetica', 'normal');
     const splitDesc = doc.splitTextToSize(ot.description || 'Sin detalle adicional', 170);
-    doc.text(splitDesc, 20, 112);
+    doc.text(splitDesc, 20, afterActs + 31);
 
     doc.save(`Reporte_${ot.otId ?? 'OT'}.pdf`);
   }, []);
