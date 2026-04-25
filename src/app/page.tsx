@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Zap, Leaf, Brush, Trash2, Wrench, Clock, CheckCircle2,
   MapPin, ChevronRight, X, Plus, LayoutDashboard, ClipboardList,
-  Download, ChevronDown, Search, User, Tag
+  Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 
@@ -75,6 +75,8 @@ interface WorkOrder {
   description: string;
   status: string;
   createdAt: number;
+  photosBefore: string[];
+  photosAfter: string[];
 }
 
 /* ─── Utility functions ─── */
@@ -106,6 +108,34 @@ function generateOTId(): string {
   }
   localStorage.setItem(COUNTER_KEY, counter.toString());
   return `OT-${String(counter).padStart(4, '0')}`;
+}
+
+function formatDate(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+}
+
+function compressImage(file: File, maxWidth: number, quality: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = document.createElement('img');
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ratio = Math.min(maxWidth / img.width, maxWidth / img.height, 1);
+        canvas.width = img.width * ratio;
+        canvas.height = img.height * ratio;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { reject('No canvas context'); return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 /* ─── Custom Dropdown Component ─── */
@@ -254,7 +284,6 @@ function MultiSelectActivities({
           );
         })}
       </div>
-      {/* Custom activity input for "Otro" */}
       <div className="flex gap-2 mt-3">
         <input
           type="text"
@@ -273,7 +302,6 @@ function MultiSelectActivities({
           <Plus size={14} />
         </button>
       </div>
-      {/* Selected activities summary */}
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-3">
           {selected.map(act => (
@@ -289,6 +317,76 @@ function MultiSelectActivities({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─── Photo Upload Component ─── */
+
+function PhotoUpload({
+  label,
+  photos,
+  onPhotosChange,
+}: {
+  label: string;
+  photos: string[];
+  onPhotosChange: (photos: string[]) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFiles = async (files: FileList | null) => {
+    if (!files) return;
+    const newPhotos: string[] = [...photos];
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const compressed = await compressImage(files[i], 800, 0.6);
+        newPhotos.push(compressed);
+      } catch (e) {
+        console.error('Error processing image:', e);
+      }
+    }
+    onPhotosChange(newPhotos);
+  };
+
+  const removePhoto = (index: number) => {
+    onPhotosChange(photos.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div>
+      <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+        <Camera size={10} /> {label}
+      </label>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={e => handleFiles(e.target.files)}
+      />
+      <div className="flex gap-2 mt-2 overflow-x-auto no-scrollbar">
+        {photos.map((photo, idx) => (
+          <div key={idx} className="relative flex-shrink-0 w-20 h-20 rounded-xl overflow-hidden group">
+            <img src={photo} alt={`${label} ${idx + 1}`} className="w-full h-full object-cover" />
+            <button
+              type="button"
+              onClick={() => removePhoto(idx)}
+              className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <X size={10} />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="flex-shrink-0 w-20 h-20 rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-1 text-slate-300 hover:border-blue-400 hover:text-blue-400 transition-colors"
+        >
+          <ImageIcon size={18} />
+          <span className="text-[7px] font-black uppercase">Agregar</span>
+        </button>
+      </div>
     </div>
   );
 }
@@ -421,6 +519,8 @@ function ModalInner({
     description: editingItem?.description ?? '',
     status: editingItem?.status ?? 'Pendiente',
     createdAt: editingItem?.createdAt,
+    photosBefore: editingItem?.photosBefore ?? [],
+    photosAfter: editingItem?.photosAfter ?? [],
   }));
   const [customActivity, setCustomActivity] = useState('');
   const [validationError, setValidationError] = useState('');
@@ -515,11 +615,23 @@ function ModalInner({
             <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Observaciones</label>
             <textarea
               className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-medium text-sm min-h-[80px]"
-              placeholder="..."
+              placeholder="Detalle de la tarea..."
               value={form.description}
               onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))}
             />
           </div>
+
+          {/* Photo uploads */}
+          <PhotoUpload
+            label="Fotos Antes"
+            photos={form.photosBefore}
+            onPhotosChange={(p) => setForm(prev => ({ ...prev, photosBefore: p }))}
+          />
+          <PhotoUpload
+            label="Fotos Después"
+            photos={form.photosAfter}
+            onPhotosChange={(p) => setForm(prev => ({ ...prev, photosAfter: p }))}
+          />
 
           {/* Status */}
           <div className="flex gap-2">
@@ -587,9 +699,7 @@ function Modal({
   onGeneratePDF: (ot: Partial<WorkOrder>) => void;
 }) {
   if (!isOpen) return null;
-
   const modalKey = editingItem?.id ?? 'new';
-
   return (
     <ModalInner
       key={modalKey}
@@ -600,6 +710,244 @@ function Modal({
       onGeneratePDF={onGeneratePDF}
     />
   );
+}
+
+/* ─── PDF Generation (matching reference format) ─── */
+
+async function loadImageAsBase64(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = document.createElement('img');
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject('No canvas'); return; }
+      ctx.drawImage(img, 0, 0);
+      resolve(canvas.toDataURL('image/jpeg'));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function buildPDF(ot: Partial<WorkOrder>) {
+  const doc = new jsPDF();
+  const pageWidth = 595.28;
+  const pageHeight = 841.89;
+  const margin = 57;
+  const contentWidth = pageWidth - margin * 2;
+
+  // ─── Header: Logos ───
+  try {
+    const logoLaguna = await loadImageAsBase64('/logo-laguna.jpg');
+    doc.addImage(logoLaguna, 'JPEG', margin, 29, 138, 64);
+  } catch { /* fallback if logo not loaded */ }
+
+  try {
+    const logoEmpresa = await loadImageAsBase64('/logo-empresa.png');
+    doc.addImage(logoEmpresa, 'PNG', 445, 29, 98, 66);
+  } catch { /* fallback if logo not loaded */ }
+
+  // ─── Header: Title ───
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(31, 40, 107); // #1f286b
+  doc.setFontSize(10);
+  doc.text('C O N D O M I N I O   &   P A R Q U E', pageWidth / 2, 125, { align: 'center' });
+
+  doc.setFontSize(14);
+  doc.text('REPORTE DE OPERACIÓN', pageWidth / 2, 169, { align: 'center' });
+
+  doc.setFontSize(11);
+  doc.text(`CÓDIGO: ${ot.otId ?? ''}`, pageWidth / 2, 192, { align: 'center' });
+
+  // ─── Divider line ───
+  doc.setDrawColor(200, 200, 200);
+  doc.line(margin, 208, pageWidth - margin, 208);
+
+  // ─── Data Table ───
+  const col1X = margin + 14;
+  const col2X = margin + 127;
+  const col3X = 348;
+  const col4X = 420;
+  const rowH = 28;
+
+  const navy = [31, 40, 107];
+
+  // Row 1: Actividad + Fecha
+  let y = 236;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(50, 50, 50);
+  doc.text('Actividad', col1X, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(0, 0, 0);
+  doc.text((ot.activities ?? []).join(', ') || '', col2X, y);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(50, 50, 50);
+  doc.text('Fecha', col3X, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(0, 0, 0);
+  doc.text(ot.createdAt ? formatDate(ot.createdAt) : '', col4X, y);
+
+  // Row 2: Estado + Área
+  y += rowH;
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text('Estado', col1X, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(ot.status ?? '', col2X, y);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Zona', col3X, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(ot.zoneName ?? '', col4X, y);
+
+  // Row 3: Zona
+  y += rowH;
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(50, 50, 50);
+  doc.text('Zona', col1X, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(0, 0, 0);
+  doc.text(ot.zoneName ?? '', col2X, y);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(50, 50, 50);
+  doc.text('Área', col3X, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(0, 0, 0);
+  doc.text((ot.activities ?? []).join(', ') || '', col4X, y);
+
+  // Row 4: Responsables
+  y += rowH + 4;
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text('Responsables', col1X, y);
+  doc.setFont('helvetica', 'normal');
+  const respText = ot.collaborator ?? '';
+  const splitResp = doc.splitTextToSize(respText, 310);
+  doc.text(splitResp, col2X, y);
+
+  // ─── Detail ───
+  y = Math.max(y + 30, 375);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(9);
+  doc.text('Detalle de la Tarea:', margin, y);
+  y += 14;
+  doc.setFont('helvetica', 'normal');
+  const splitDesc = doc.splitTextToSize(ot.description || 'Sin detalle adicional', contentWidth);
+  doc.text(splitDesc, margin, y);
+
+  // ─── Evidence Section ───
+  y = 485;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(0, 0, 0);
+  doc.text('EVIDENCIA FOTOGRÁFICA', pageWidth / 2, y, { align: 'center' });
+
+  // ANTES / DESPUÉS labels
+  y += 24;
+  const beforeCenterX = margin + 113;
+  const afterCenterX = margin + 340;
+  doc.setFontSize(8);
+  doc.text('ANTES', beforeCenterX, y, { align: 'center' });
+  doc.text('DESPUÉS', afterCenterX, y, { align: 'center' });
+
+  // Photo boxes
+  y += 14;
+  const photoW = 227;
+  const photoH = 170;
+  const beforeX = margin;
+  const afterX = margin + 255;
+
+  // Draw placeholder boxes
+  doc.setDrawColor(200, 200, 200);
+  doc.setFillColor(245, 245, 245);
+  doc.roundedRect(beforeX, y, photoW, photoH, 4, 4, 'FD');
+  doc.roundedRect(afterX, y, photoW, photoH, 4, 4, 'FD');
+
+  // Add photos
+  const photosBefore = ot.photosBefore ?? [];
+  const photosAfter = ot.photosAfter ?? [];
+
+  if (photosBefore.length > 0) {
+    try {
+      // Use first photo, or create a composite
+      const firstPhoto = photosBefore[0];
+      doc.addImage(firstPhoto, 'JPEG', beforeX + 2, y + 2, photoW - 4, photoH - 4);
+    } catch { /* skip if image fails */ }
+  } else {
+    doc.setFontSize(8);
+    doc.setTextColor(180, 180, 180);
+    doc.text('Sin foto', beforeCenterX, y + photoH / 2, { align: 'center' });
+  }
+
+  if (photosAfter.length > 0) {
+    try {
+      const firstPhoto = photosAfter[0];
+      doc.addImage(firstPhoto, 'JPEG', afterX + 2, y + 2, photoW - 4, photoH - 4);
+    } catch { /* skip if image fails */ }
+  } else {
+    doc.setFontSize(8);
+    doc.setTextColor(180, 180, 180);
+    doc.text('Sin foto', afterCenterX, y + photoH / 2, { align: 'center' });
+  }
+
+  // Additional photos on next page if there are more
+  const extraBefore = photosBefore.slice(1);
+  const extraAfter = photosAfter.slice(1);
+  if (extraBefore.length > 0 || extraAfter.length > 0) {
+    doc.addPage();
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+    doc.text('EVIDENCIA FOTOGRÁFICA (continuación)', pageWidth / 2, 40, { align: 'center' });
+
+    let photoY = 60;
+    let colIndex = 0;
+    const allExtra = [
+      ...extraBefore.map(p => ({ data: p, label: 'ANTES' })),
+      ...extraAfter.map(p => ({ data: p, label: 'DESPUÉS' })),
+    ];
+
+    for (let i = 0; i < allExtra.length; i++) {
+      const col = colIndex % 2;
+      const x = col === 0 ? margin : margin + 255;
+
+      if (col === 0 && i > 0) photoY += photoH + 20;
+      if (photoY + photoH > pageHeight - 60) {
+        doc.addPage();
+        photoY = 40;
+      }
+
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'bold');
+      doc.text(allExtra[i].label, x + photoW / 2, photoY, { align: 'center' });
+      photoY += 10;
+
+      doc.setFillColor(245, 245, 245);
+      doc.roundedRect(x, photoY, photoW, photoH, 4, 4, 'FD');
+      try {
+        doc.addImage(allExtra[i].data, 'JPEG', x + 2, photoY + 2, photoW - 4, photoH - 4);
+      } catch { /* skip */ }
+
+      colIndex++;
+    }
+  }
+
+  // ─── Footer ───
+  const footerY = pageHeight - 57;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(150, 150, 150);
+  doc.text('Documento generado automáticamente por Sistema de Gestión Laguna Norte.', pageWidth / 2, footerY, { align: 'center' });
+  doc.text('administración asesorías integrales CyJ', pageWidth / 2, footerY + 14, { align: 'center' });
+
+  doc.save(`OT_${ot.otId ?? 'Reporte'}_Reporte.pdf`);
 }
 
 /* ─── Main App ─── */
@@ -632,6 +980,8 @@ export default function Home() {
         description: data.description ?? '',
         status: data.status ?? 'Pendiente',
         createdAt: Date.now(),
+        photosBefore: data.photosBefore ?? [],
+        photosAfter: data.photosAfter ?? [],
       };
       setWorkOrders(prev => [newOT, ...prev]);
     }
@@ -646,7 +996,7 @@ export default function Home() {
   }, []);
 
   const handleCreateFromCategory = useCallback((categoryName: string) => {
-    setEditingItem({ activities: [categoryName], status: 'Pendiente', zoneName: '', collaborator: '', collaboratorRole: '' });
+    setEditingItem({ activities: [categoryName], status: 'Pendiente', zoneName: '', collaborator: '', collaboratorRole: '', photosBefore: [], photosAfter: [] });
     setIsModalOpen(true);
   }, []);
 
@@ -666,67 +1016,20 @@ export default function Home() {
   }, []);
 
   const generatePDF = useCallback((ot: Partial<WorkOrder>) => {
-    const doc = new jsPDF();
-
-    doc.setFillColor(34, 158, 197);
-    doc.circle(20, 20, 10, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(31, 40, 107);
-    doc.setFontSize(22);
-    doc.text('Laguna Norte', 40, 25);
-
-    doc.setDrawColor(200, 200, 200);
-    doc.line(20, 35, 190, 35);
-
-    doc.setFontSize(14);
-    doc.text('REPORTE DE OPERACION', 105, 50, { align: 'center' });
-    doc.setFontSize(10);
-    doc.text(`CODIGO: ${ot.otId ?? ''}`, 105, 57, { align: 'center' });
-
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Actividades:', 20, 70);
-    doc.setFont('helvetica', 'normal');
-    const actsText = (ot.activities ?? []).join(' / ') || 'Sin actividades';
-    const splitActs = doc.splitTextToSize(actsText, 170);
-    doc.text(splitActs, 20, 77);
-
-    const afterActs = 77 + splitActs.length * 5;
-
-    doc.setFont('helvetica', 'bold');
-    doc.text('Colaborador: ', 20, afterActs);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`${ot.collaborator ?? ''} - ${ot.collaboratorRole ?? ''}`, 55, afterActs);
-
-    doc.setFont('helvetica', 'bold');
-    doc.text('Zona: ', 20, afterActs + 7);
-    doc.setFont('helvetica', 'normal');
-    doc.text(ot.zoneName ?? '', 40, afterActs + 7);
-
-    doc.setFont('helvetica', 'bold');
-    doc.text('Estado: ', 20, afterActs + 14);
-    doc.setFont('helvetica', 'normal');
-    doc.text(ot.status ?? '', 47, afterActs + 14);
-
-    doc.setFont('helvetica', 'bold');
-    doc.text('Detalle:', 20, afterActs + 24);
-    doc.setFont('helvetica', 'normal');
-    const splitDesc = doc.splitTextToSize(ot.description || 'Sin detalle adicional', 170);
-    doc.text(splitDesc, 20, afterActs + 31);
-
-    doc.save(`Reporte_${ot.otId ?? 'OT'}.pdf`);
+    buildPDF(ot);
   }, []);
 
   return (
     <div className="max-w-xl mx-auto min-h-screen pb-32 bg-slate-50">
-      <header className="p-8 bg-white border-b border-slate-100 sticky top-0 z-40 flex justify-between items-center shadow-sm">
-        <div>
-          <h1 className="text-xl font-black text-slate-800 uppercase tracking-tighter leading-none">Laguna Norte</h1>
-          <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest mt-1">Operaciones</p>
+      <header className="p-6 bg-white border-b border-slate-100 sticky top-0 z-40 flex justify-between items-center shadow-sm">
+        <div className="flex items-center gap-3">
+          <img src="/logo-laguna.jpg" alt="Laguna Norte" className="h-10 rounded-lg" />
+          <div>
+            <h1 className="text-sm font-black text-slate-800 uppercase tracking-tighter leading-none">Laguna Norte</h1>
+            <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest mt-0.5">Condominio & Parque</p>
+          </div>
         </div>
-        <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-100">
-          <ClipboardList size={24} />
-        </div>
+        <img src="/logo-empresa.png" alt="CyJ" className="h-10 rounded-lg" />
       </header>
 
       <main className="p-6">
