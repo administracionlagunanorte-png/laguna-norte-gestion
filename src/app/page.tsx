@@ -6,7 +6,6 @@ import {
   MapPin, ChevronRight, X, Plus, LayoutDashboard, ClipboardList,
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon
 } from 'lucide-react';
-import { jsPDF } from 'jspdf';
 
 /* ─── Data Lists ─── */
 
@@ -92,10 +91,13 @@ function notifyStoreListeners() {
 function subscribeToStore(callback: () => void): () => void {
   storeListeners.push(callback);
   const onStorage = () => { cachedSnapshot = null; callback(); };
+  const onCustom = () => { callback(); };
   window.addEventListener('storage', onStorage);
+  window.addEventListener('laguna_norte_storage', onCustom);
   return () => {
     storeListeners = storeListeners.filter(l => l !== callback);
     window.removeEventListener('storage', onStorage);
+    window.removeEventListener('laguna_norte_storage', onCustom);
   };
 }
 
@@ -128,6 +130,7 @@ function migrateWorkOrder(ot: any): WorkOrder {
 }
 
 function getStoreSnapshot(): WorkOrder[] {
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw !== cachedRaw) {
@@ -152,6 +155,7 @@ function getServerSnapshot(): WorkOrder[] {
 }
 
 function writeWorkOrders(updater: React.SetStateAction<WorkOrder[]>): void {
+  if (typeof window === 'undefined') return;
   try {
     const current = getStoreSnapshot();
     const next = typeof updater === 'function' ? updater(current) : updater;
@@ -175,12 +179,15 @@ function generateUniqueId(): string {
 }
 
 function generateOTId(): string {
+  if (typeof window === 'undefined') return 'OT-0001';
   let counter = 1;
   try {
     const stored = localStorage.getItem(COUNTER_KEY);
     if (stored) counter = parseInt(stored, 10) + 1;
   } catch (e) { /* fallback */ }
-  localStorage.setItem(COUNTER_KEY, counter.toString());
+  try {
+    localStorage.setItem(COUNTER_KEY, counter.toString());
+  } catch (e) { /* fallback */ }
   return `OT-${String(counter).padStart(4, '0')}`;
 }
 
@@ -899,6 +906,8 @@ function addPageFooter(doc: jsPDF, pw: number, ph: number) {
 }
 
 async function buildPDF(ot: Partial<WorkOrder>) {
+  // Dynamic import to avoid SSR issues
+  const { jsPDF } = await import('jspdf');
   // IMPORTANT: Use 'pt' units so coordinates match A4 point dimensions
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const pw = 595.28;
@@ -1194,10 +1203,13 @@ function useLocalStorageWorkOrders(): [WorkOrder[], (updater: React.SetStateActi
 /* ─── Main App ─── */
 
 export default function Home() {
+  const [mounted, setMounted] = useState(false);
   const [view, setView] = useState<'dashboard' | 'ots'>('dashboard');
   const [workOrders, setWorkOrders] = useLocalStorageWorkOrders();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
+
+  useEffect(() => { setMounted(true); }, []);
 
   const handleSaveOT = useCallback((data: Partial<WorkOrder>) => {
     if (data.id) {
@@ -1250,6 +1262,17 @@ export default function Home() {
   const generatePDF = useCallback((ot: Partial<WorkOrder>) => {
     buildPDF(ot);
   }, []);
+
+  if (!mounted) {
+    return (
+      <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-slate-400 text-sm font-bold">Cargando...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-xl mx-auto min-h-screen pb-32 bg-slate-50">
