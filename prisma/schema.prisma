@@ -1,13 +1,9 @@
-// NOTE: For Vercel deployment with PostgreSQL, change provider to "postgresql"
-// and set DATABASE_URL to your PostgreSQL connection string in Vercel environment variables.
-// The model structure is compatible with both SQLite and PostgreSQL.
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
