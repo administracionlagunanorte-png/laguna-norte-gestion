@@ -103,34 +103,88 @@ function migrateWorkOrder(ot: any): WorkOrder {
   };
 }
 
-/* ─── Custom Hook: useWorkOrders ─── */
+/* ─── LocalStorage helpers ─── */
+
+const STORAGE_KEY = 'laguna_norte_ots';
+const COUNTER_KEY = 'laguna_norte_ot_counter';
+
+function readFromLocalStorage(): WorkOrder[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(migrateWorkOrder) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeToLocalStorage(orders: WorkOrder[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+  } catch (e) {
+    console.error('Error al guardar en localStorage:', e);
+  }
+}
+
+function readCounterFromLocalStorage(): number {
+  try {
+    const stored = localStorage.getItem(COUNTER_KEY);
+    return stored ? parseInt(stored, 10) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeCounterToLocalStorage(counter: number) {
+  try {
+    localStorage.setItem(COUNTER_KEY, counter.toString());
+  } catch { /* ignore */ }
+}
+
+/* ─── Custom Hook: useWorkOrders (Hybrid: localStorage + API sync) ─── */
 
 function useWorkOrders() {
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [apiAvailable, setApiAvailable] = useState(false);
   const mountedRef = useRef(false);
-  const abortRef = useRef<AbortController | null>(null);
 
+  // Try to fetch from API; if fails, use localStorage
   const fetchWorkOrders = useCallback(async (showSyncIndicator = false) => {
     try {
       if (showSyncIndicator) setSyncing(true);
       const res = await fetch('/api/workorders');
-      if (!res.ok) throw new Error('Error fetching work orders');
+      if (!res.ok) throw new Error('API not available');
       const data = await res.json();
       const migrated = Array.isArray(data) ? data.map(migrateWorkOrder) : [];
       setWorkOrders(migrated);
-    } catch (error) {
-      console.error('Error al obtener órdenes:', error);
+      // Also save to localStorage as backup
+      writeToLocalStorage(migrated);
+      if (!apiAvailable) setApiAvailable(true);
+    } catch {
+      // API not available — load from localStorage
+      if (!apiAvailable) setApiAvailable(false);
+      const local = readFromLocalStorage();
+      setWorkOrders(local);
     } finally {
       setLoading(false);
       setSyncing(false);
     }
-  }, []);
+  }, [apiAvailable]);
 
-  // Initial fetch + polling every 10 seconds
+  // Initial load + polling every 10 seconds for cross-device sync
   useEffect(() => {
     mountedRef.current = true;
+
+    // First try localStorage for instant load, then fetch from API
+    const local = readFromLocalStorage();
+    if (local.length > 0) {
+      setWorkOrders(local);
+      setLoading(false);
+    }
+
     fetchWorkOrders(true);
 
     const interval = setInterval(() => {
@@ -140,16 +194,17 @@ function useWorkOrders() {
     return () => {
       mountedRef.current = false;
       clearInterval(interval);
-      if (abortRef.current) abortRef.current.abort();
     };
-  }, [fetchWorkOrders]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
-    const id = generateUniqueId();
-    const otId = generateOTIdFromList(workOrders);
+    let counter = readCounterFromLocalStorage();
+    counter++;
+    writeCounterToLocalStorage(counter);
+    const otId = `OT-${String(counter).padStart(4, '0')}`;
 
     const newOT: WorkOrder = {
-      id,
+      id: generateUniqueId(),
       otId,
       activities: data.activities ?? [],
       collaborators: data.collaborators ?? [],
@@ -161,76 +216,80 @@ function useWorkOrders() {
       photosAfter: data.photosAfter ?? [],
     };
 
-    // Optimistic update
-    setWorkOrders(prev => [newOT, ...prev]);
+    // Save to state + localStorage immediately (always works)
+    setWorkOrders(prev => {
+      const updated = [newOT, ...prev];
+      writeToLocalStorage(updated);
+      return updated;
+    });
 
+    // Try to sync with API in the background
     try {
       const res = await fetch('/api/workorders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newOT),
       });
-      if (!res.ok) throw new Error('Error creating work order');
-      const saved = await res.json();
-      const migrated = migrateWorkOrder(saved);
-      // Replace optimistic entry with server response
-      setWorkOrders(prev => prev.map(ot => ot.id === id ? migrated : ot));
-      return migrated;
-    } catch (error) {
-      console.error('Error al crear orden:', error);
-      // Revert optimistic update
-      setWorkOrders(prev => prev.filter(ot => ot.id !== id));
-      return null;
+      if (res.ok) {
+        setApiAvailable(true);
+      }
+    } catch {
+      // API not available — data is already saved in localStorage
     }
-  }, [workOrders]);
+
+    return newOT;
+  }, []);
 
   const updateWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
     if (!data.id) return null;
 
-    // Optimistic update
-    setWorkOrders(prev => prev.map(ot => ot.id === data.id ? { ...ot, ...data } as WorkOrder : ot));
+    // Update state + localStorage immediately
+    setWorkOrders(prev => {
+      const updated = prev.map(ot => ot.id === data.id ? { ...ot, ...data } as WorkOrder : ot);
+      writeToLocalStorage(updated);
+      return updated;
+    });
 
+    // Try to sync with API in the background
     try {
       const res = await fetch(`/api/workorders/${data.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Error updating work order');
-      const saved = await res.json();
-      const migrated = migrateWorkOrder(saved);
-      // Replace with server response
-      setWorkOrders(prev => prev.map(ot => ot.id === data.id ? migrated : ot));
-      return migrated;
-    } catch (error) {
-      console.error('Error al actualizar orden:', error);
-      // Revert: re-fetch from server
-      fetchWorkOrders(false);
-      return null;
+      if (res.ok) {
+        setApiAvailable(true);
+      }
+    } catch {
+      // API not available — data is already saved in localStorage
     }
-  }, [fetchWorkOrders]);
+
+    return { ...data } as WorkOrder;
+  }, []);
 
   const deleteWorkOrder = useCallback(async (id: string): Promise<boolean> => {
-    // Optimistic update
-    const previous = workOrders;
-    setWorkOrders(prev => prev.filter(ot => ot.id !== id));
+    // Delete from state + localStorage immediately
+    setWorkOrders(prev => {
+      const updated = prev.filter(ot => ot.id !== id);
+      writeToLocalStorage(updated);
+      return updated;
+    });
 
+    // Try to sync with API in the background
     try {
-      const res = await fetch(`/api/workorders/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Error deleting work order');
-      return true;
-    } catch (error) {
-      console.error('Error al eliminar orden:', error);
-      // Revert
-      setWorkOrders(previous);
-      return false;
+      await fetch(`/api/workorders/${id}`, { method: 'DELETE' });
+    } catch {
+      // API not available — data is already deleted from localStorage
     }
-  }, [workOrders]);
+
+    return true;
+  }, []);
 
   return {
     workOrders,
     loading,
     syncing,
+    apiAvailable,
     createWorkOrder,
     updateWorkOrder,
     deleteWorkOrder,
@@ -244,20 +303,6 @@ function generateUniqueId(): string {
     return crypto.randomUUID();
   }
   return Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 9);
-}
-
-// Generate OT ID based on existing work orders (no localStorage counter)
-function generateOTIdFromList(existingOrders: WorkOrder[]): string {
-  let maxCounter = 0;
-  for (const ot of existingOrders) {
-    const match = ot.otId?.match(/^OT-(\d+)$/);
-    if (match) {
-      const num = parseInt(match[1], 10);
-      if (num > maxCounter) maxCounter = num;
-    }
-  }
-  const nextCounter = maxCounter + 1;
-  return `OT-${String(nextCounter).padStart(4, '0')}`;
 }
 
 function formatDate(ts: number): string {
@@ -1222,7 +1267,7 @@ async function buildPDF(ot: Partial<WorkOrder>) {
 /* ─── Main App ─── */
 
 export default function LagunaNorteApp() {
-  const { workOrders, loading, syncing, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders();
+  const { workOrders, loading, syncing, apiAvailable, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders();
   const [view, setView] = useState<'dashboard' | 'ots'>('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
@@ -1290,9 +1335,9 @@ export default function LagunaNorteApp() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <div className={`flex items-center gap-1 text-[8px] font-black uppercase ${syncing ? 'text-amber-500' : 'text-emerald-500'}`}>
+          <div className={`flex items-center gap-1 text-[8px] font-black uppercase ${syncing ? 'text-amber-500' : apiAvailable ? 'text-emerald-500' : 'text-orange-400'}`}>
             <RefreshCw size={10} className={syncing ? 'animate-spin' : ''} />
-            <span>{syncing ? 'Sincronizando...' : 'Sincronizado'}</span>
+            <span>{syncing ? 'Sincronizando...' : apiAvailable ? 'En línea' : 'Local'}</span>
           </div>
           <img src="/logo-empresa.png" alt="CyJ" className="h-10 rounded-lg" />
         </div>
