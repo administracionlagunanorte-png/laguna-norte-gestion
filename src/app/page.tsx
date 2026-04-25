@@ -99,12 +99,46 @@ function subscribeToStore(callback: () => void): () => void {
   };
 }
 
+function migrateWorkOrder(ot: any): WorkOrder {
+  // Ensure collaborators is always an array (old format stored a single string)
+  let collaborators: string[];
+  if (Array.isArray(ot.collaborators)) {
+    collaborators = ot.collaborators;
+  } else if (typeof ot.collaborators === 'string' && ot.collaborators.trim()) {
+    collaborators = [ot.collaborators];
+  } else {
+    collaborators = [];
+  }
+  // Ensure activities is always an array
+  let activities: string[];
+  if (Array.isArray(ot.activities)) {
+    activities = ot.activities;
+  } else if (typeof ot.activities === 'string' && ot.activities.trim()) {
+    activities = [ot.activities];
+  } else {
+    activities = [];
+  }
+  return {
+    ...ot,
+    collaborators,
+    activities,
+    photosBefore: Array.isArray(ot.photosBefore) ? ot.photosBefore : [],
+    photosAfter: Array.isArray(ot.photosAfter) ? ot.photosAfter : [],
+  };
+}
+
 function getStoreSnapshot(): WorkOrder[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw !== cachedRaw) {
       cachedRaw = raw;
-      cachedSnapshot = raw ? JSON.parse(raw) : [];
+      const parsed = raw ? JSON.parse(raw) : [];
+      cachedSnapshot = Array.isArray(parsed) ? parsed.map(migrateWorkOrder) : [];
+      // Persist migrated data back so we don't re-migrate every time
+      const migratedRaw = JSON.stringify(cachedSnapshot);
+      if (migratedRaw !== raw) {
+        localStorage.setItem(STORAGE_KEY, migratedRaw);
+      }
     }
   } catch (e) {
     console.error('Error al leer localStorage:', e);
@@ -544,8 +578,8 @@ function Dashboard({ workOrders }: { workOrders: WorkOrder[] }) {
           {workOrders.slice(0, 3).map(ot => (
             <div key={ot.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
               <div className="truncate pr-4">
-                <p className="font-bold text-sm uppercase truncate">{ot.activities.join(', ')}</p>
-                <p className="text-[10px] text-white/40 uppercase">{ot.zoneName} · {ot.collaborators.map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}</p>
+                <p className="font-bold text-sm uppercase truncate">{(ot.activities ?? []).join(', ')}</p>
+                <p className="text-[10px] text-white/40 uppercase">{ot.zoneName} · {(ot.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}</p>
               </div>
               <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase ${STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}>
                 {ot.status}
@@ -599,14 +633,14 @@ function OTList({
                 <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
                 <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
               </div>
-              <h4 className="font-black text-slate-800 uppercase truncate">{ot.activities.join(', ')}</h4>
+              <h4 className="font-black text-slate-800 uppercase truncate">{(ot.activities ?? []).join(', ')}</h4>
               <div className="flex items-center gap-3 mt-1">
                 <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
                   <MapPin size={10} className="text-blue-500" /> {ot.zoneName}
                 </p>
-                {ot.collaborators.length > 0 && (
+                {(ot.collaborators ?? []).length > 0 && (
                   <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                    <User size={10} className="text-purple-500" /> {ot.collaborators.map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}
+                    <User size={10} className="text-purple-500" /> {(ot.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}
                   </p>
                 )}
               </div>
