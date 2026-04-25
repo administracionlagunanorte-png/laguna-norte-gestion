@@ -893,7 +893,7 @@ async function loadImageAsBase64(url: string): Promise<string> {
   });
 }
 
-function addPageFooter(doc: jsPDF, pw: number, ph: number) {
+function addPageFooter(doc: any, pw: number, ph: number) {
   const footerY = ph - 30;
   doc.setDrawColor(31, 40, 107);
   doc.setLineWidth(0.5);
