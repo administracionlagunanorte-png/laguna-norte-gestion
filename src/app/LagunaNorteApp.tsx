@@ -142,16 +142,17 @@ function writeCounterToLocalStorage(counter: number) {
   } catch { /* ignore */ }
 }
 
-/* ─── Custom Hook: useWorkOrders (Hybrid: localStorage + API sync) ─── */
+/* ─── Custom Hook: useWorkOrders (Hybrid: localStorage + API sync with immediate push) ─── */
 
 function useWorkOrders() {
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [apiAvailable, setApiAvailable] = useState(false);
+  const [lastSync, setLastSync] = useState<number>(0);
   const mountedRef = useRef(false);
 
-  // Try to fetch from API; if fails, use localStorage
+  // Fetch from API; fallback to localStorage
   const fetchWorkOrders = useCallback(async (showSyncIndicator = false) => {
     try {
       if (showSyncIndicator) setSyncing(true);
@@ -160,36 +161,37 @@ function useWorkOrders() {
       const data = await res.json();
       const migrated = Array.isArray(data) ? data.map(migrateWorkOrder) : [];
       setWorkOrders(migrated);
-      // Also save to localStorage as backup
       writeToLocalStorage(migrated);
-      if (!apiAvailable) setApiAvailable(true);
+      setApiAvailable(true);
+      setLastSync(Date.now());
     } catch {
-      // API not available — load from localStorage
-      if (!apiAvailable) setApiAvailable(false);
+      setApiAvailable(false);
       const local = readFromLocalStorage();
       setWorkOrders(local);
     } finally {
       setLoading(false);
       setSyncing(false);
     }
-  }, [apiAvailable]);
+  }, []);
 
-  // Initial load + polling every 10 seconds for cross-device sync
+  // Initial load + polling every 5 seconds for cross-device sync
   useEffect(() => {
     mountedRef.current = true;
 
-    // First try localStorage for instant load, then fetch from API
+    // First load from localStorage for instant display
     const local = readFromLocalStorage();
     if (local.length > 0) {
       setWorkOrders(local);
       setLoading(false);
     }
 
+    // Then fetch from API (authoritative source)
     fetchWorkOrders(true);
 
+    // Poll every 5 seconds for near-real-time cross-device sync
     const interval = setInterval(() => {
       fetchWorkOrders(false);
-    }, 10000);
+    }, 5000);
 
     return () => {
       mountedRef.current = false;
@@ -216,14 +218,14 @@ function useWorkOrders() {
       photosAfter: data.photosAfter ?? [],
     };
 
-    // Save to state + localStorage immediately (always works)
+    // Save to state + localStorage immediately (always works offline)
     setWorkOrders(prev => {
       const updated = [newOT, ...prev];
       writeToLocalStorage(updated);
       return updated;
     });
 
-    // Try to sync with API in the background
+    // Push to API immediately — this is what syncs across devices
     try {
       const res = await fetch('/api/workorders', {
         method: 'POST',
@@ -232,13 +234,18 @@ function useWorkOrders() {
       });
       if (res.ok) {
         setApiAvailable(true);
+        setLastSync(Date.now());
+        // Re-fetch to confirm server state and get any other device's changes
+        fetchWorkOrders(false);
+      } else {
+        setApiAvailable(false);
       }
     } catch {
-      // API not available — data is already saved in localStorage
+      setApiAvailable(false);
     }
 
     return newOT;
-  }, []);
+  }, [fetchWorkOrders]);
 
   const updateWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
     if (!data.id) return null;
@@ -250,7 +257,7 @@ function useWorkOrders() {
       return updated;
     });
 
-    // Try to sync with API in the background
+    // Push to API immediately for cross-device sync
     try {
       const res = await fetch(`/api/workorders/${data.id}`, {
         method: 'PUT',
@@ -259,13 +266,17 @@ function useWorkOrders() {
       });
       if (res.ok) {
         setApiAvailable(true);
+        setLastSync(Date.now());
+        fetchWorkOrders(false);
+      } else {
+        setApiAvailable(false);
       }
     } catch {
-      // API not available — data is already saved in localStorage
+      setApiAvailable(false);
     }
 
     return { ...data } as WorkOrder;
-  }, []);
+  }, [fetchWorkOrders]);
 
   const deleteWorkOrder = useCallback(async (id: string): Promise<boolean> => {
     // Delete from state + localStorage immediately
@@ -275,11 +286,17 @@ function useWorkOrders() {
       return updated;
     });
 
-    // Try to sync with API in the background
+    // Push deletion to API immediately for cross-device sync
     try {
-      await fetch(`/api/workorders/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/workorders/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setApiAvailable(true);
+        setLastSync(Date.now());
+      } else {
+        setApiAvailable(false);
+      }
     } catch {
-      // API not available — data is already deleted from localStorage
+      setApiAvailable(false);
     }
 
     return true;
@@ -290,6 +307,7 @@ function useWorkOrders() {
     loading,
     syncing,
     apiAvailable,
+    lastSync,
     createWorkOrder,
     updateWorkOrder,
     deleteWorkOrder,
@@ -1267,7 +1285,7 @@ async function buildPDF(ot: Partial<WorkOrder>) {
 /* ─── Main App ─── */
 
 export default function LagunaNorteApp() {
-  const { workOrders, loading, syncing, apiAvailable, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders();
+  const { workOrders, loading, syncing, apiAvailable, lastSync, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders();
   const [view, setView] = useState<'dashboard' | 'ots'>('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
@@ -1337,7 +1355,7 @@ export default function LagunaNorteApp() {
         <div className="flex items-center gap-3">
           <div className={`flex items-center gap-1 text-[8px] font-black uppercase ${syncing ? 'text-amber-500' : apiAvailable ? 'text-emerald-500' : 'text-orange-400'}`}>
             <RefreshCw size={10} className={syncing ? 'animate-spin' : ''} />
-            <span>{syncing ? 'Sincronizando...' : apiAvailable ? 'En línea' : 'Local'}</span>
+            <span>{syncing ? 'Sincronizando...' : apiAvailable ? 'En línea' : 'Sin BD'}</span>
           </div>
           <img src="/logo-empresa.png" alt="CyJ" className="h-10 rounded-lg" />
         </div>
