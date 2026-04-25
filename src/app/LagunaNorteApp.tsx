@@ -642,7 +642,8 @@ function PhotoUpload({
   photos: string[];
   onPhotosChange: (photos: string[]) => void;
 }) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
@@ -656,6 +657,9 @@ function PhotoUpload({
       }
     }
     onPhotosChange(newPhotos);
+    // Reset input value so the same file can be selected again
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+    if (galleryInputRef.current) galleryInputRef.current.value = '';
   };
 
   return (
@@ -663,7 +667,24 @@ function PhotoUpload({
       <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
         <Camera size={10} /> {label}
       </label>
-      <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={e => handleFiles(e.target.files)} />
+      {/* Camera input — opens camera directly on mobile */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={e => handleFiles(e.target.files)}
+      />
+      {/* Gallery input — opens file picker / gallery */}
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={e => handleFiles(e.target.files)}
+      />
       <div className="flex gap-2 mt-2 overflow-x-auto no-scrollbar">
         {photos.map((photo, idx) => (
           <div key={idx} className="relative flex-shrink-0 w-20 h-20 rounded-xl overflow-hidden group">
@@ -677,13 +698,23 @@ function PhotoUpload({
             </button>
           </div>
         ))}
+        {/* Camera button — opens camera directly */}
         <button
           type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="flex-shrink-0 w-20 h-20 rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-1 text-slate-300 hover:border-blue-400 hover:text-blue-400 transition-colors"
+          onClick={() => cameraInputRef.current?.click()}
+          className="flex-shrink-0 w-20 h-20 rounded-xl border-2 border-dashed border-blue-300 bg-blue-50 flex flex-col items-center justify-center gap-1 text-blue-400 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-100 transition-colors"
+        >
+          <Camera size={18} />
+          <span className="text-[7px] font-black uppercase">Cámara</span>
+        </button>
+        {/* Gallery button — opens file picker / gallery */}
+        <button
+          type="button"
+          onClick={() => galleryInputRef.current?.click()}
+          className="flex-shrink-0 w-20 h-20 rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-1 text-slate-300 hover:border-emerald-400 hover:text-emerald-400 transition-colors"
         >
           <ImageIcon size={18} />
-          <span className="text-[7px] font-black uppercase">Agregar</span>
+          <span className="text-[7px] font-black uppercase">Galería</span>
         </button>
       </div>
     </div>
