@@ -866,7 +866,7 @@ function Modal({
   );
 }
 
-/* ─── PDF Generation (matching reference format exactly) ─── */
+/* ─── PDF Generation ─── */
 
 async function loadImageAsBase64(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -886,157 +886,232 @@ async function loadImageAsBase64(url: string): Promise<string> {
   });
 }
 
-async function buildPDF(ot: Partial<WorkOrder>) {
-  const doc = new jsPDF();
-  const pw = 595.28;
-  const ph = 841.89;
-  const m = 57;
-  const cw = pw - m * 2;
-
-  // ─── Header: Logos ───
-  try {
-    const logo1 = await loadImageAsBase64('/logo-laguna.jpg');
-    doc.addImage(logo1, 'JPEG', m, 29, 138, 64);
-  } catch { /* skip */ }
-  try {
-    const logo2 = await loadImageAsBase64('/logo-empresa.png');
-    doc.addImage(logo2, 'PNG', 445, 29, 98, 66);
-  } catch { /* skip */ }
-
-  // ─── Header: Title ───
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(31, 40, 107);
-  doc.setFontSize(10);
-  doc.text('C O N D O M I N I O   &   P A R Q U E', pw / 2, 125, { align: 'center' });
-  doc.setFontSize(14);
-  doc.text('REPORTE DE OPERACION', pw / 2, 150, { align: 'center' });
-  doc.setFontSize(11);
-  doc.text(`CODIGO: ${ot.otId ?? ''}`, pw / 2, 170, { align: 'center' });
-
-  // ─── Divider ───
+function addPageFooter(doc: jsPDF, pw: number, ph: number) {
+  const footerY = ph - 30;
   doc.setDrawColor(31, 40, 107);
   doc.setLineWidth(0.5);
-  doc.line(m, 185, pw - m, 185);
+  doc.line(40, footerY - 8, pw - 40, footerY - 8);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  doc.setTextColor(120, 120, 120);
+  doc.text('Documento generado automaticamente por Sistema de Gestion Laguna Norte', pw / 2, footerY, { align: 'center' });
+  doc.text('Administracion - Asesorias Integrales CyJ', pw / 2, footerY + 8, { align: 'center' });
+}
 
-  // ─── Data Table with borders ───
+async function buildPDF(ot: Partial<WorkOrder>) {
+  // IMPORTANT: Use 'pt' units so coordinates match A4 point dimensions
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const pw = 595.28;
+  const ph = 841.89;
+  const m = 40; // margin
+  const cw = pw - m * 2;
+
+  // Colors
+  const navy = [31, 40, 107];
+  const navyLight = [230, 233, 245];
+  const labelColor = [80, 80, 80];
+  const valueColor = [30, 30, 30];
+  const borderColor = [190, 195, 210];
+
+  /* ─── HEADER ROW: Logos + Title ─── */
+  let y = 30;
+
+  // Left logo
+  try {
+    const logo1 = await loadImageAsBase64('/logo-laguna.jpg');
+    doc.addImage(logo1, 'JPEG', m, y, 130, 52);
+  } catch { /* skip */ }
+
+  // Right logo
+  try {
+    const logo2 = await loadImageAsBase64('/logo-empresa.png');
+    doc.addImage(logo2, 'PNG', pw - m - 90, y, 90, 52);
+  } catch { /* skip */ }
+
+  y += 62;
+
+  // Title block centered
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...navy);
+  doc.setFontSize(9);
+  doc.text('C O N D O M I N I O   &   P A R Q U E', pw / 2, y, { align: 'center' });
+  y += 16;
+  doc.setFontSize(14);
+  doc.text('REPORTE DE OPERACION', pw / 2, y, { align: 'center' });
+  y += 14;
+  doc.setFontSize(10);
+  doc.text(`CODIGO: ${ot.otId ?? ''}`, pw / 2, y, { align: 'center' });
+  y += 12;
+
+  // Thick divider
+  doc.setDrawColor(...navy);
+  doc.setLineWidth(1.5);
+  doc.line(m, y, pw - m, y);
+  y += 14;
+
+  /* ─── DATA TABLE ─── */
   const tblX = m;
   const tblW = cw;
-  const col1W = 70;
-  const col2W = tblW / 2 - col1W;
-  const col3W = 40;
-  const col4W = tblW / 2 - col3W;
-  const rowH = 22;
-  let y = 200;
+  const labelColW = 90;
+  const halfW = tblW / 2;
+  const valColW = halfW - labelColW;
+  const rowH = 24;
 
-  const navy = [31, 40, 107];
-  const labelColor = [50, 50, 50];
-  const valueColor = [0, 0, 0];
+  function drawTableRow(
+    label1: string, value1: string,
+    label2: string, value2: string,
+    rowY: number
+  ): number {
+    // Full row background
+    doc.setFillColor(252, 252, 255);
+    doc.rect(tblX, rowY, tblW, rowH, 'F');
 
-  function drawRow(label: string, value: string, label2: string, value2: string) {
-    // Row background
-    doc.setFillColor(250, 250, 255);
-    doc.rect(tblX, y, tblW, rowH, 'F');
-    // Border
-    doc.setDrawColor(200, 200, 200);
-    doc.setLineWidth(0.2);
-    doc.rect(tblX, y, tblW, rowH, 'S');
-    doc.line(tblX + tblW / 2, y, tblX + tblW / 2, y + rowH);
-    // Label column
-    doc.setFillColor(240, 242, 255);
-    doc.rect(tblX, y, col1W, rowH, 'F');
-    doc.rect(tblX + tblW / 2, y, col3W, rowH, 'F');
-    // Labels
+    // Left label bg
+    doc.setFillColor(...navyLight);
+    doc.rect(tblX, rowY, labelColW, rowH, 'F');
+
+    // Right label bg
+    doc.setFillColor(...navyLight);
+    doc.rect(tblX + halfW, rowY, labelColW, rowH, 'F');
+
+    // Borders
+    doc.setDrawColor(...borderColor);
+    doc.setLineWidth(0.3);
+    doc.rect(tblX, rowY, tblW, rowH, 'S');
+    doc.line(tblX + halfW, rowY, tblX + halfW, rowY + rowH);
+    doc.line(tblX + labelColW, rowY, tblX + labelColW, rowY + rowH);
+    doc.line(tblX + halfW + labelColW, rowY, tblX + halfW + labelColW, rowY + rowH);
+
+    // Label text
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(...labelColor);
-    doc.text(label, tblX + 5, y + 14);
-    doc.text(label2, tblX + tblW / 2 + 5, y + 14);
-    // Values
+    doc.setFontSize(7.5);
+    doc.setTextColor(...navy);
+    doc.text(label1, tblX + 6, rowY + 15);
+    doc.text(label2, tblX + halfW + 6, rowY + 15);
+
+    // Value text
     doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
     doc.setTextColor(...valueColor);
-    doc.text(doc.splitTextToSize(value, col2W - 10)[0] || '', tblX + col1W + 5, y + 14);
-    doc.text(doc.splitTextToSize(value2, col4W - 10)[0] || '', tblX + tblW / 2 + col3W + 5, y + 14);
-    y += rowH;
+    const v1 = doc.splitTextToSize(value1, valColW - 12);
+    const v2 = doc.splitTextToSize(value2, valColW - 12);
+    doc.text(v1[0] || '', tblX + labelColW + 6, rowY + 15);
+    doc.text(v2[0] || '', tblX + halfW + labelColW + 6, rowY + 15);
+
+    return rowY + rowH;
   }
 
-  drawRow('Actividad', (ot.activities ?? []).join(', '), 'Fecha', ot.createdAt ? formatDate(ot.createdAt) : '');
-  drawRow('Estado', ot.status ?? '', 'Zona', ot.zoneName ?? '');
-  drawRow('Area', (ot.activities ?? []).join(', '), 'Codigo', ot.otId ?? '');
-
-  // Responsables row (may be taller)
-  const respText = (ot.collaborators ?? []).join(', ');
-  const splitResp = doc.splitTextToSize(respText, col2W + col4W + col3W - 10);
-  const respRowH = Math.max(rowH, splitResp.length * 12 + 10);
-  doc.setFillColor(250, 250, 255);
-  doc.rect(tblX, y, tblW, respRowH, 'F');
-  doc.setDrawColor(200, 200, 200);
-  doc.setLineWidth(0.2);
-  doc.rect(tblX, y, tblW, respRowH, 'S');
-  doc.setFillColor(240, 242, 255);
-  doc.rect(tblX, y, col1W, respRowH, 'F');
+  // Table header row
+  doc.setFillColor(...navy);
+  doc.rect(tblX, y, tblW, rowH, 'F');
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(...labelColor);
-  doc.text('Responsables', tblX + 5, y + 14);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(...valueColor);
-  doc.text(splitResp, tblX + col1W + 5, y + 14);
-  y += respRowH;
+  doc.setFontSize(7.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text('INFORMACION DE LA ORDEN', tblX + 6, y + 15);
+  doc.text('DETALLE', tblX + halfW + 6, y + 15);
+  y += rowH;
 
-  // ─── Detalle de la Tarea ───
-  y += 12;
+  const activities = (ot.activities ?? []).join(', ');
+  const collaborators = (ot.collaborators ?? []).join(', ');
+  const dateStr = ot.createdAt ? formatDate(ot.createdAt) : '';
+
+  y = drawTableRow('Actividad', activities, 'Fecha', dateStr, y);
+  y = drawTableRow('Estado', ot.status ?? '', 'Zona', ot.zoneName ?? '', y);
+  y = drawTableRow('Codigo', ot.otId ?? '', 'Area', activities, y);
+
+  // Responsables row (may need more height)
+  const respSplit = doc.splitTextToSize(collaborators, tblW - labelColW - 12);
+  const respH = Math.max(rowH, respSplit.length * 11 + 12);
+
+  doc.setFillColor(252, 252, 255);
+  doc.rect(tblX, y, tblW, respH, 'F');
+  doc.setFillColor(...navyLight);
+  doc.rect(tblX, y, labelColW, respH, 'F');
+  doc.setDrawColor(...borderColor);
+  doc.setLineWidth(0.3);
+  doc.rect(tblX, y, tblW, respH, 'S');
+  doc.line(tblX + labelColW, y, tblX + labelColW, y + respH);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...navy);
+  doc.text('Responsables', tblX + 6, y + 14);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...valueColor);
+  doc.text(respSplit, tblX + labelColW + 6, y + 14);
+  y += respH;
+
+  /* ─── OBSERVACIONES ─── */
+  y += 16;
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...navy);
   doc.setFontSize(10);
-  doc.text('Detalle de la Tarea:', m, y);
+  doc.text('OBSERVACIONES', m, y);
+  y += 6;
+
+  // Underline
+  doc.setDrawColor(...navy);
+  doc.setLineWidth(0.5);
+  doc.line(m, y, pw - m, y);
   y += 10;
 
-  // Box for detail
-  doc.setDrawColor(200, 200, 200);
-  doc.setLineWidth(0.2);
-  const descText = ot.description || 'Sin detalle adicional';
-  const splitDesc = doc.splitTextToSize(descText, cw - 20);
-  const descH = Math.max(30, splitDesc.length * 10 + 16);
+  // Box
+  const descText = ot.description || 'Sin observaciones registradas';
+  const splitDesc = doc.splitTextToSize(descText, cw - 24);
+  const descH = Math.max(40, splitDesc.length * 11 + 18);
+
+  doc.setDrawColor(...borderColor);
+  doc.setLineWidth(0.3);
   doc.setFillColor(252, 252, 255);
   doc.roundedRect(m, y, cw, descH, 3, 3, 'FD');
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...valueColor);
   doc.setFontSize(9);
-  doc.text(splitDesc, m + 10, y + 12);
-  y += descH + 15;
+  doc.text(splitDesc, m + 12, y + 14);
+  y += descH + 18;
 
-  // ─── EVIDENCIA FOTOGRAFICA ───
+  /* ─── EVIDENCIA FOTOGRAFICA ─── */
+  // Check if we need a new page for photos
+  const photoW = (cw - 16) / 2;
+  const photoH = photoW * 0.75;
+  const minSpaceNeeded = photoH + 50;
+
+  if (y + minSpaceNeeded > ph - 50) {
+    addPageFooter(doc, pw, ph);
+    doc.addPage();
+    y = 40;
+  }
+
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...navy);
   doc.setFontSize(10);
   doc.text('EVIDENCIA FOTOGRAFICA', pw / 2, y, { align: 'center' });
-  y += 10;
-
-  // Divider under title
-  doc.setDrawColor(31, 40, 107);
-  doc.setLineWidth(0.3);
+  y += 6;
+  doc.setDrawColor(...navy);
+  doc.setLineWidth(0.5);
   doc.line(m, y, pw - m, y);
-  y += 10;
+  y += 12;
 
-  // ANTES / DESPUES labels
-  const photoW = 227;
-  const photoH = 150;
-  const gap = cw - photoW * 2;
+  // ANTES / DESPUES columns
+  const gap = 16;
   const beforeX = m;
   const afterX = m + photoW + gap;
 
+  // Labels
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...labelColor);
+  doc.setTextColor(...navy);
   doc.text('ANTES', beforeX + photoW / 2, y, { align: 'center' });
   doc.text('DESPUES', afterX + photoW / 2, y, { align: 'center' });
   y += 8;
 
-  // Photo placeholder boxes
-  doc.setDrawColor(200, 200, 200);
-  doc.setFillColor(248, 248, 252);
-  doc.roundedRect(beforeX, y, photoW, photoH, 4, 4, 'FD');
-  doc.roundedRect(afterX, y, photoW, photoH, 4, 4, 'FD');
+  // Photo boxes
+  doc.setDrawColor(...borderColor);
+  doc.setFillColor(245, 246, 250);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(beforeX, y, photoW, photoH, 3, 3, 'FD');
+  doc.roundedRect(afterX, y, photoW, photoH, 3, 3, 'FD');
 
   const photosBefore = ot.photosBefore ?? [];
   const photosAfter = ot.photosAfter ?? [];
@@ -1062,52 +1137,49 @@ async function buildPDF(ot: Partial<WorkOrder>) {
     doc.setFont('helvetica', 'italic');
     doc.text('Sin foto', afterX + photoW / 2, y + photoH / 2, { align: 'center' });
   }
-  y += photoH + 5;
+  y += photoH + 8;
 
-  // Extra photos
+  // Extra photos on additional pages
   const extraBefore = photosBefore.slice(1);
   const extraAfter = photosAfter.slice(1);
   if (extraBefore.length > 0 || extraAfter.length > 0) {
-    doc.addPage();
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor(...navy);
-    doc.text('EVIDENCIA FOTOGRAFICA (continuacion)', pw / 2, 40, { align: 'center' });
-    let py = 60;
-    const pairs: { before?: string; after?: string }[] = [];
     const maxExtra = Math.max(extraBefore.length, extraAfter.length);
     for (let i = 0; i < maxExtra; i++) {
-      pairs.push({ before: extraBefore[i], after: extraAfter[i] });
-    }
-    for (const pair of pairs) {
-      if (py + photoH + 30 > ph) { doc.addPage(); py = 40; }
+      if (y + photoH + 40 > ph - 40) {
+        addPageFooter(doc, pw, ph);
+        doc.addPage();
+        y = 40;
+      }
       doc.setFontSize(8);
       doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...labelColor);
-      if (pair.before) {
-        doc.text('ANTES', beforeX + photoW / 2, py, { align: 'center' });
-        py += 8;
-        doc.setFillColor(248, 248, 252);
-        doc.roundedRect(beforeX, py, photoW, photoH, 4, 4, 'FD');
-        try { doc.addImage(pair.before, 'JPEG', beforeX + 2, py + 2, photoW - 4, photoH - 4); } catch { /* skip */ }
+      doc.setTextColor(...navy);
+      doc.text(`Foto ${i + 2}`, m, y);
+      y += 12;
+
+      doc.setDrawColor(...borderColor);
+      doc.setFillColor(245, 246, 250);
+      doc.setLineWidth(0.3);
+      doc.roundedRect(beforeX, y, photoW, photoH, 3, 3, 'FD');
+      doc.roundedRect(afterX, y, photoW, photoH, 3, 3, 'FD');
+
+      if (extraBefore[i]) {
+        try { doc.addImage(extraBefore[i], 'JPEG', beforeX + 2, y + 2, photoW - 4, photoH - 4); } catch { /* skip */ }
+      } else {
+        doc.setFontSize(7); doc.setTextColor(180, 180, 180); doc.setFont('helvetica', 'italic');
+        doc.text('Sin foto', beforeX + photoW / 2, y + photoH / 2, { align: 'center' });
       }
-      if (pair.after) {
-        doc.text('DESPUES', afterX + photoW / 2, py - 8, { align: 'center' });
-        doc.setFillColor(248, 248, 252);
-        doc.roundedRect(afterX, py, photoW, photoH, 4, 4, 'FD');
-        try { doc.addImage(pair.after, 'JPEG', afterX + 2, py + 2, photoW - 4, photoH - 4); } catch { /* skip */ }
+      if (extraAfter[i]) {
+        try { doc.addImage(extraAfter[i], 'JPEG', afterX + 2, y + 2, photoW - 4, photoH - 4); } catch { /* skip */ }
+      } else {
+        doc.setFontSize(7); doc.setTextColor(180, 180, 180); doc.setFont('helvetica', 'italic');
+        doc.text('Sin foto', afterX + photoW / 2, y + photoH / 2, { align: 'center' });
       }
-      py += photoH + 20;
+      y += photoH + 12;
     }
   }
 
-  // ─── Footer ───
-  const footerY = ph - 50;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(150, 150, 150);
-  doc.text('Documento generado automaticamente por Sistema de Gestion Laguna Norte.', pw / 2, footerY, { align: 'center' });
-  doc.text('administracion asesorias integrales CyJ', pw / 2, footerY + 10, { align: 'center' });
+  // Footer on last page
+  addPageFooter(doc, pw, ph);
 
   doc.save(`OT_${ot.otId ?? 'Reporte'}_Reporte.pdf`);
 }
