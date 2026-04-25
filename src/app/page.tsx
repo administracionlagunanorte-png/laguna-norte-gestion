@@ -79,33 +79,65 @@ interface WorkOrder {
   photosAfter: string[];
 }
 
-/* ─── Utility functions ─── */
+/* ─── External Store for localStorage work orders (SSR-safe, no infinite loops) ─── */
 
-function loadWorkOrders(): WorkOrder[] {
+const emptyWorkOrders: WorkOrder[] = [];
+let cachedSnapshot: WorkOrder[] | null = null;
+let cachedRaw: string | null = null;
+let storeListeners: (() => void)[] = [];
+
+function notifyStoreListeners() {
+  for (const listener of storeListeners) {
+    listener();
+  }
+}
+
+function subscribeToStore(callback: () => void): () => void {
+  storeListeners.push(callback);
+  // Also listen for cross-tab storage changes
+  const onStorage = () => {
+    cachedSnapshot = null; // invalidate cache
+    callback();
+  };
+  window.addEventListener('storage', onStorage);
+  return () => {
+    storeListeners = storeListeners.filter(l => l !== callback);
+    window.removeEventListener('storage', onStorage);
+  };
+}
+
+function getStoreSnapshot(): WorkOrder[] {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return JSON.parse(saved);
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw !== cachedRaw) {
+      cachedRaw = raw;
+      cachedSnapshot = raw ? JSON.parse(raw) : [];
+    }
   } catch (e) {
     console.error('Error al leer localStorage:', e);
+    cachedSnapshot = [];
   }
-  return [];
-}
-
-// useSyncExternalStore helpers for localStorage-backed work orders
-// Server always returns [] to avoid hydration mismatch
-const emptyWorkOrders: WorkOrder[] = [];
-
-function subscribeToStorage(callback: () => void) {
-  window.addEventListener('storage', callback);
-  return () => window.removeEventListener('storage', callback);
-}
-
-function getStorageSnapshot(): WorkOrder[] {
-  return loadWorkOrders();
+  return cachedSnapshot ?? [];
 }
 
 function getServerSnapshot(): WorkOrder[] {
   return emptyWorkOrders;
+}
+
+function writeWorkOrders(updater: React.SetStateAction<WorkOrder[]>): void {
+  try {
+    const current = getStoreSnapshot();
+    const next = typeof updater === 'function' ? updater(current) : updater;
+    const raw = JSON.stringify(next);
+    localStorage.setItem(STORAGE_KEY, raw);
+    // Update cache directly so next read returns same reference
+    cachedRaw = raw;
+    cachedSnapshot = next;
+    // Notify subscribers to re-render
+    notifyStoreListeners();
+  } catch (e) {
+    console.error('Error al guardar en localStorage:', e);
+  }
 }
 
 function generateUniqueId(): string {
@@ -970,23 +1002,8 @@ async function buildPDF(ot: Partial<WorkOrder>) {
 /* ─── Custom hook: localStorage work orders with SSR safety ─── */
 
 function useLocalStorageWorkOrders(): [WorkOrder[], (updater: React.SetStateAction<WorkOrder[]>) => void] {
-  // useSyncExternalStore: server returns [], client reads from localStorage
-  const storedOrders = useSyncExternalStore(subscribeToStorage, getStorageSnapshot, getServerSnapshot);
-
-  // Writer function that updates localStorage and triggers re-render via storage event
-  const setStoredOrders = useCallback((updater: React.SetStateAction<WorkOrder[]>) => {
-    try {
-      const current = loadWorkOrders();
-      const next = typeof updater === 'function' ? updater(current) : updater;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      // Trigger storage event so useSyncExternalStore re-reads
-      window.dispatchEvent(new Event('storage'));
-    } catch (e) {
-      console.error('Error al guardar en localStorage:', e);
-    }
-  }, []);
-
-  return [storedOrders, setStoredOrders];
+  const storedOrders = useSyncExternalStore(subscribeToStore, getStoreSnapshot, getServerSnapshot);
+  return [storedOrders, writeWorkOrders];
 }
 
 /* ─── Main App ─── */
