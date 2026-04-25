@@ -137,17 +137,18 @@ function getStoreSnapshot(): WorkOrder[] {
     if (raw !== cachedRaw) {
       cachedRaw = raw;
       const parsed = raw ? JSON.parse(raw) : [];
-      cachedSnapshot = Array.isArray(parsed) ? parsed.map(migrateWorkOrder) : [];
+      cachedSnapshot = Array.isArray(parsed) ? parsed.map(migrateWorkOrder) : emptyWorkOrders;
       const migratedRaw = JSON.stringify(cachedSnapshot);
       if (migratedRaw !== raw) {
         localStorage.setItem(STORAGE_KEY, migratedRaw);
+        cachedRaw = migratedRaw; // Keep cachedRaw in sync after migration write
       }
     }
   } catch (e) {
     console.error('Error al leer localStorage:', e);
-    cachedSnapshot = [];
+    cachedSnapshot = emptyWorkOrders;
   }
-  return cachedSnapshot ?? [];
+  return cachedSnapshot ?? emptyWorkOrders;
 }
 
 function getServerSnapshot(): WorkOrder[] {
