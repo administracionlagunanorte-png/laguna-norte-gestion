@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Zap, Leaf, Brush, Trash2, Wrench, Clock, CheckCircle2,
   MapPin, ChevronRight, X, Plus, LayoutDashboard, ClipboardList,
-  Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon
+  Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
+  RefreshCw
 } from 'lucide-react';
 
 /* ─── Data Lists ─── */
@@ -59,9 +60,6 @@ const STATUS_CONFIG: Record<string, { color: string; text: string }> = {
   'Terminada': { color: 'bg-emerald-500', text: 'text-emerald-600' },
 };
 
-const STORAGE_KEY = 'laguna_norte_ots';
-const COUNTER_KEY = 'laguna_norte_ot_counter';
-
 /* ─── Types ─── */
 
 interface WorkOrder {
@@ -77,33 +75,7 @@ interface WorkOrder {
   photosAfter: string[];
 }
 
-/* ─── External Store for localStorage ─── */
-
-const emptyWorkOrders: WorkOrder[] = [];
-let cachedSnapshot: WorkOrder[] | null = null;
-let cachedRaw: string | null = null;
-let storeListeners: (() => void)[] = [];
-
-function notifyStoreListeners() {
-  for (const listener of storeListeners) listener();
-}
-
-function subscribeToStore(callback: () => void): () => void {
-  storeListeners.push(callback);
-  const onStorage = () => { cachedSnapshot = null; callback(); };
-  const onCustom = () => { callback(); };
-  try {
-    window.addEventListener('storage', onStorage);
-    window.addEventListener('laguna_norte_storage', onCustom);
-  } catch (e) { /* SSR guard */ }
-  return () => {
-    storeListeners = storeListeners.filter(l => l !== callback);
-    try {
-      window.removeEventListener('storage', onStorage);
-      window.removeEventListener('laguna_norte_storage', onCustom);
-    } catch (e) { /* SSR guard */ }
-  };
-}
+/* ─── Migration helper (backward compat) ─── */
 
 function migrateWorkOrder(ot: any): WorkOrder {
   let collaborators: string[];
@@ -131,42 +103,138 @@ function migrateWorkOrder(ot: any): WorkOrder {
   };
 }
 
-function getStoreSnapshot(): WorkOrder[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw !== cachedRaw) {
-      cachedRaw = raw;
-      const parsed = raw ? JSON.parse(raw) : [];
-      cachedSnapshot = Array.isArray(parsed) ? parsed.map(migrateWorkOrder) : emptyWorkOrders;
-      const migratedRaw = JSON.stringify(cachedSnapshot);
-      if (migratedRaw !== raw) {
-        localStorage.setItem(STORAGE_KEY, migratedRaw);
-        cachedRaw = migratedRaw; // Keep cachedRaw in sync after migration write
-      }
+/* ─── Custom Hook: useWorkOrders ─── */
+
+function useWorkOrders() {
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const mountedRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const fetchWorkOrders = useCallback(async (showSyncIndicator = false) => {
+    try {
+      if (showSyncIndicator) setSyncing(true);
+      const res = await fetch('/api/workorders');
+      if (!res.ok) throw new Error('Error fetching work orders');
+      const data = await res.json();
+      const migrated = Array.isArray(data) ? data.map(migrateWorkOrder) : [];
+      setWorkOrders(migrated);
+    } catch (error) {
+      console.error('Error al obtener órdenes:', error);
+    } finally {
+      setLoading(false);
+      setSyncing(false);
     }
-  } catch (e) {
-    console.error('Error al leer localStorage:', e);
-    cachedSnapshot = emptyWorkOrders;
-  }
-  return cachedSnapshot ?? emptyWorkOrders;
-}
+  }, []);
 
-function getServerSnapshot(): WorkOrder[] {
-  return emptyWorkOrders;
-}
+  // Initial fetch + polling every 10 seconds
+  useEffect(() => {
+    mountedRef.current = true;
+    fetchWorkOrders(true);
 
-function writeWorkOrders(updater: React.SetStateAction<WorkOrder[]>): void {
-  try {
-    const current = getStoreSnapshot();
-    const next = typeof updater === 'function' ? updater(current) : updater;
-    const raw = JSON.stringify(next);
-    localStorage.setItem(STORAGE_KEY, raw);
-    cachedRaw = raw;
-    cachedSnapshot = next;
-    notifyStoreListeners();
-  } catch (e) {
-    console.error('Error al guardar en localStorage:', e);
-  }
+    const interval = setInterval(() => {
+      fetchWorkOrders(false);
+    }, 10000);
+
+    return () => {
+      mountedRef.current = false;
+      clearInterval(interval);
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, [fetchWorkOrders]);
+
+  const createWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
+    const id = generateUniqueId();
+    const otId = generateOTIdFromList(workOrders);
+
+    const newOT: WorkOrder = {
+      id,
+      otId,
+      activities: data.activities ?? [],
+      collaborators: data.collaborators ?? [],
+      zoneName: data.zoneName ?? '',
+      description: data.description ?? '',
+      status: data.status ?? 'Pendiente',
+      createdAt: Date.now(),
+      photosBefore: data.photosBefore ?? [],
+      photosAfter: data.photosAfter ?? [],
+    };
+
+    // Optimistic update
+    setWorkOrders(prev => [newOT, ...prev]);
+
+    try {
+      const res = await fetch('/api/workorders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newOT),
+      });
+      if (!res.ok) throw new Error('Error creating work order');
+      const saved = await res.json();
+      const migrated = migrateWorkOrder(saved);
+      // Replace optimistic entry with server response
+      setWorkOrders(prev => prev.map(ot => ot.id === id ? migrated : ot));
+      return migrated;
+    } catch (error) {
+      console.error('Error al crear orden:', error);
+      // Revert optimistic update
+      setWorkOrders(prev => prev.filter(ot => ot.id !== id));
+      return null;
+    }
+  }, [workOrders]);
+
+  const updateWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
+    if (!data.id) return null;
+
+    // Optimistic update
+    setWorkOrders(prev => prev.map(ot => ot.id === data.id ? { ...ot, ...data } as WorkOrder : ot));
+
+    try {
+      const res = await fetch(`/api/workorders/${data.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Error updating work order');
+      const saved = await res.json();
+      const migrated = migrateWorkOrder(saved);
+      // Replace with server response
+      setWorkOrders(prev => prev.map(ot => ot.id === data.id ? migrated : ot));
+      return migrated;
+    } catch (error) {
+      console.error('Error al actualizar orden:', error);
+      // Revert: re-fetch from server
+      fetchWorkOrders(false);
+      return null;
+    }
+  }, [fetchWorkOrders]);
+
+  const deleteWorkOrder = useCallback(async (id: string): Promise<boolean> => {
+    // Optimistic update
+    const previous = workOrders;
+    setWorkOrders(prev => prev.filter(ot => ot.id !== id));
+
+    try {
+      const res = await fetch(`/api/workorders/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Error deleting work order');
+      return true;
+    } catch (error) {
+      console.error('Error al eliminar orden:', error);
+      // Revert
+      setWorkOrders(previous);
+      return false;
+    }
+  }, [workOrders]);
+
+  return {
+    workOrders,
+    loading,
+    syncing,
+    createWorkOrder,
+    updateWorkOrder,
+    deleteWorkOrder,
+  };
 }
 
 /* ─── Utility functions ─── */
@@ -178,16 +246,18 @@ function generateUniqueId(): string {
   return Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 9);
 }
 
-function generateOTId(): string {
-  let counter = 1;
-  try {
-    const stored = localStorage.getItem(COUNTER_KEY);
-    if (stored) counter = parseInt(stored, 10) + 1;
-  } catch (e) { /* fallback */ }
-  try {
-    localStorage.setItem(COUNTER_KEY, counter.toString());
-  } catch (e) { /* fallback */ }
-  return `OT-${String(counter).padStart(4, '0')}`;
+// Generate OT ID based on existing work orders (no localStorage counter)
+function generateOTIdFromList(existingOrders: WorkOrder[]): string {
+  let maxCounter = 0;
+  for (const ot of existingOrders) {
+    const match = ot.otId?.match(/^OT-(\d+)$/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > maxCounter) maxCounter = num;
+    }
+  }
+  const nextCounter = maxCounter + 1;
+  return `OT-${String(nextCounter).padStart(4, '0')}`;
 }
 
 function formatDate(ts: number): string {
@@ -1149,48 +1219,29 @@ async function buildPDF(ot: Partial<WorkOrder>) {
   doc.save(`OT_${ot.otId ?? 'Reporte'}_Reporte.pdf`);
 }
 
-/* ─── Custom hook ─── */
-
-function useLocalStorageWorkOrders(): [WorkOrder[], (updater: React.SetStateAction<WorkOrder[]>) => void] {
-  const storedOrders = useSyncExternalStore(subscribeToStore, getStoreSnapshot, getServerSnapshot);
-  return [storedOrders, writeWorkOrders];
-}
-
 /* ─── Main App ─── */
 
 export default function LagunaNorteApp() {
+  const { workOrders, loading, syncing, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders();
   const [view, setView] = useState<'dashboard' | 'ots'>('dashboard');
-  const [workOrders, setWorkOrders] = useLocalStorageWorkOrders();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
 
-  const handleSaveOT = useCallback((data: Partial<WorkOrder>) => {
+  const handleSaveOT = useCallback(async (data: Partial<WorkOrder>) => {
     if (data.id) {
-      setWorkOrders(prev => prev.map(ot => ot.id === data.id ? { ...ot, ...data } as WorkOrder : ot));
+      await updateWorkOrder(data);
     } else {
-      const newOT: WorkOrder = {
-        id: generateUniqueId(),
-        otId: generateOTId(),
-        activities: data.activities ?? [],
-        collaborators: data.collaborators ?? [],
-        zoneName: data.zoneName ?? '',
-        description: data.description ?? '',
-        status: data.status ?? 'Pendiente',
-        createdAt: Date.now(),
-        photosBefore: data.photosBefore ?? [],
-        photosAfter: data.photosAfter ?? [],
-      };
-      setWorkOrders(prev => [newOT, ...prev]);
+      await createWorkOrder(data);
     }
     setIsModalOpen(false);
     setEditingItem(null);
-  }, [setWorkOrders]);
+  }, [createWorkOrder, updateWorkOrder]);
 
-  const handleDeleteOT = useCallback((id: string) => {
-    setWorkOrders(prev => prev.filter(o => o.id !== id));
+  const handleDeleteOT = useCallback(async (id: string) => {
+    await deleteWorkOrder(id);
     setIsModalOpen(false);
     setEditingItem(null);
-  }, [setWorkOrders]);
+  }, [deleteWorkOrder]);
 
   const handleCreateFromCategory = useCallback((categoryName: string) => {
     setEditingItem({ activities: [categoryName], collaborators: [], status: 'Pendiente', zoneName: '', description: '', photosBefore: [], photosAfter: [] });
@@ -1216,6 +1267,18 @@ export default function LagunaNorteApp() {
     buildPDF(ot);
   }, []);
 
+  // Show loading spinner while initial data is being fetched
+  if (loading) {
+    return (
+      <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-slate-400 text-sm font-bold">Cargando datos...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-xl mx-auto min-h-screen pb-32 bg-slate-50">
       <header className="p-6 bg-white border-b border-slate-100 sticky top-0 z-40 flex justify-between items-center shadow-sm">
@@ -1226,7 +1289,13 @@ export default function LagunaNorteApp() {
             <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest mt-0.5">Condominio & Parque</p>
           </div>
         </div>
-        <img src="/logo-empresa.png" alt="CyJ" className="h-10 rounded-lg" />
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-1 text-[8px] font-black uppercase ${syncing ? 'text-amber-500' : 'text-emerald-500'}`}>
+            <RefreshCw size={10} className={syncing ? 'animate-spin' : ''} />
+            <span>{syncing ? 'Sincronizando...' : 'Sincronizado'}</span>
+          </div>
+          <img src="/logo-empresa.png" alt="CyJ" className="h-10 rounded-lg" />
+        </div>
       </header>
 
       <main className="p-6">

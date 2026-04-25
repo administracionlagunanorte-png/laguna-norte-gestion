@@ -1,8 +1,6 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// NOTE: For Vercel deployment with PostgreSQL, change provider to "postgresql"
+// and set DATABASE_URL to your PostgreSQL connection string in Vercel environment variables.
+// The model structure is compatible with both SQLite and PostgreSQL.
 
 generator client {
   provider = "prisma-client-js"
@@ -13,20 +11,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model WorkOrder {
+  id            String   @id
+  otId          String
+  activities    String   // JSON array stored as string
+  collaborators String   // JSON array stored as string
+  zoneName      String
+  description   String   @default("")
+  status        String   @default("Pendiente")
+  photosBefore  String   @default("[]") // JSON array of base64 strings
+  photosAfter   String   @default("[]") // JSON array of base64 strings
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
