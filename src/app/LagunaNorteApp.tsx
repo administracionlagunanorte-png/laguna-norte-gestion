@@ -5,7 +5,7 @@ import {
   Zap, Leaf, Brush, Trash2, Wrench, Clock, CheckCircle2,
   MapPin, ChevronRight, X, Plus, ClipboardList,
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
-  RefreshCw, Settings, Pencil, Droplets, Flame
+  RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -155,6 +155,19 @@ const PERSONNEL_KEY = 'laguna_norte_personnel';
 const ZONES_KEY = 'laguna_norte_zones';
 const CONFIG_VERSION_KEY = 'laguna_norte_config_version';
 const CONFIG_VERSION = 2; // Increment when default data changes to force reload
+const USER_ROLE_KEY = 'laguna_norte_user_role';
+const ADMIN_PWD_KEY = 'laguna_norte_admin_pwd';
+const DEFAULT_ADMIN_PWD = 'admin2024';
+
+type UserRole = 'admin' | 'usuario';
+
+function getAdminPwd(): string {
+  try { return localStorage.getItem(ADMIN_PWD_KEY) || DEFAULT_ADMIN_PWD; } catch { return DEFAULT_ADMIN_PWD; }
+}
+
+function checkAdminPwd(pwd: string): boolean {
+  return pwd === getAdminPwd();
+}
 
 function readFromLocalStorage(): WorkOrder[] {
   try {
@@ -876,9 +889,62 @@ function PhotoUpload({
   );
 }
 
+/* ─── Security Tab Component ─── */
+
+function SecurityTab() {
+  const [currentPwd, setCurrentPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmPwd, setConfirmPwd] = useState('');
+  const [msg, setMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const handleChangePwd = () => {
+    if (!currentPwd || !newPwd || !confirmPwd) { setErrorMsg('Completa todos los campos'); return; }
+    if (!checkAdminPwd(currentPwd)) { setErrorMsg('La clave actual es incorrecta'); setCurrentPwd(''); return; }
+    if (newPwd.length < 4) { setErrorMsg('La nueva clave debe tener al menos 4 caracteres'); return; }
+    if (newPwd !== confirmPwd) { setErrorMsg('Las claves no coinciden'); return; }
+    try { localStorage.setItem(ADMIN_PWD_KEY, newPwd); } catch {}
+    setCurrentPwd(''); setNewPwd(''); setConfirmPwd('');
+    setErrorMsg(''); setMsg('Clave actualizada correctamente');
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-slate-50 rounded-2xl p-4 space-y-4">
+        <div className="flex items-center gap-3 mb-2">
+          <Shield size={20} className="text-blue-600" />
+          <div>
+            <p className="font-black text-slate-800 text-sm uppercase">Clave de Administración</p>
+            <p className="text-[9px] text-slate-400 font-medium">Esta clave protege el acceso al perfil administrador</p>
+          </div>
+        </div>
+        <div>
+          <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Clave actual</label>
+          <input type="password" value={currentPwd} onChange={e => { setCurrentPwd(e.target.value); setErrorMsg(''); setMsg(''); }} className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm mt-1" placeholder="Ingresa la clave actual" />
+        </div>
+        <div>
+          <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Nueva clave</label>
+          <input type="password" value={newPwd} onChange={e => { setNewPwd(e.target.value); setErrorMsg(''); setMsg(''); }} className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm mt-1" placeholder="Ingresa la nueva clave" />
+        </div>
+        <div>
+          <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Confirmar nueva clave</label>
+          <input type="password" value={confirmPwd} onChange={e => { setConfirmPwd(e.target.value); setErrorMsg(''); setMsg(''); }} className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm mt-1" placeholder="Repite la nueva clave" />
+        </div>
+        {errorMsg && <p className="text-red-500 text-xs font-bold text-center">{errorMsg}</p>}
+        {msg && <p className="text-emerald-500 text-xs font-bold text-center">{msg}</p>}
+        <button onClick={handleChangePwd} className="w-full py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase active:scale-95 transition-transform">Cambiar Clave</button>
+      </div>
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+        <p className="text-[9px] font-bold text-amber-600 uppercase mb-1">Información</p>
+        <p className="text-[10px] text-amber-700 font-medium">La clave predeterminada es <span className="font-black">admin2024</span>. Cámbiala para mayor seguridad. Si olvidas la clave, puedes restaurarla eliminando los datos del navegador.</p>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Admin Panel Component ─── */
 
-type AdminTab = 'areas' | 'personal' | 'zonas';
+type AdminTab = 'areas' | 'personal' | 'zonas' | 'seguridad';
 
 function AdminPanel({
   isOpen,
@@ -1014,6 +1080,7 @@ function AdminPanel({
     { key: 'areas', label: 'Áreas de Trabajo' },
     { key: 'personal', label: 'Personal' },
     { key: 'zonas', label: 'Zonas' },
+    { key: 'seguridad', label: 'Clave' },
   ];
 
   return (
@@ -1279,6 +1346,8 @@ function AdminPanel({
               )}
             </>
           )}
+
+          {activeTab === 'seguridad' && <SecurityTab />}
         </div>
       </div>
     </div>
@@ -1296,6 +1365,7 @@ function ModalInner({
   workAreas,
   personnel,
   zones,
+  userRole,
 }: {
   editingItem: Partial<WorkOrder> | null;
   onClose: () => void;
@@ -1305,6 +1375,7 @@ function ModalInner({
   workAreas: WorkArea[];
   personnel: Personnel[];
   zones: Zone[];
+  userRole: UserRole;
 }) {
   const [form, setForm] = useState(() => {
     // Try to infer work area from editing item's activities
@@ -1550,16 +1621,26 @@ function ModalInner({
 
           {/* 7. Status */}
           <div className="flex gap-2">
-            {Object.keys(STATUS_CONFIG).map(s => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setForm(prev => ({ ...prev, status: s }))}
-                className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase ${form.status === s ? `${STATUS_CONFIG[s].color} text-white` : 'bg-slate-100 text-slate-400'}`}
-              >
-                {s}
-              </button>
-            ))}
+            {Object.keys(STATUS_CONFIG).map(s => {
+              const isRestricted = s === 'Terminada' && userRole !== 'admin';
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => !isRestricted && setForm(prev => ({ ...prev, status: s }))}
+                  disabled={isRestricted}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${
+                    isRestricted
+                      ? 'bg-slate-50 text-slate-200 cursor-not-allowed'
+                      : form.status === s
+                        ? `${STATUS_CONFIG[s].color} text-white`
+                        : 'bg-slate-100 text-slate-400'
+                  }`}
+                >
+                  {isRestricted ? <span className="flex items-center justify-center gap-1"><Shield size={10} /> {s}</span> : s}
+                </button>
+              );
+            })}
           </div>
 
           {validationError && (
@@ -1583,13 +1664,15 @@ function ModalInner({
               >
                 <Download size={14} /> PDF
               </button>
-              <button
-                type="button"
-                onClick={() => onDelete(editingItem.id!)}
-                className="p-3 bg-red-50 text-red-500 rounded-xl"
-              >
-                <Trash2 size={20} />
-              </button>
+              {userRole === 'admin' && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(editingItem.id!)}
+                  className="p-3 bg-red-50 text-red-500 rounded-xl"
+                >
+                  <Trash2 size={20} />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1608,6 +1691,7 @@ function Modal({
   workAreas,
   personnel,
   zones,
+  userRole,
 }: {
   isOpen: boolean;
   editingItem: Partial<WorkOrder> | null;
@@ -1618,6 +1702,7 @@ function Modal({
   workAreas: WorkArea[];
   personnel: Personnel[];
   zones: Zone[];
+  userRole: UserRole;
 }) {
   if (!isOpen) return null;
   const modalKey = editingItem?.id ?? 'new';
@@ -1632,6 +1717,7 @@ function Modal({
       workAreas={workAreas}
       personnel={personnel}
       zones={zones}
+      userRole={userRole}
     />
   );
 }
@@ -1920,6 +2006,101 @@ async function buildPDF(ot: Partial<WorkOrder>) {
 
 type StatusFilter = 'Todas' | 'Pendiente' | 'En Proceso' | 'Terminada';
 
+/* ─── Profile Login Screen ─── */
+
+function ProfileLogin({ onLogin }: { onLogin: (role: UserRole) => void }) {
+  const [showPwdModal, setShowPwdModal] = useState(false);
+
+  return (
+    <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <img src="/logo-laguna.jpg" alt="Laguna Norte" className="h-20 rounded-2xl mx-auto mb-4 shadow-lg" />
+          <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Laguna Norte</h1>
+          <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-1">Condominio & Parque - Sistema de Gestión</p>
+        </div>
+        <div className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
+          <p className="text-center text-sm font-bold text-slate-500 uppercase">Selecciona tu perfil</p>
+          <button
+            onClick={() => setShowPwdModal(true)}
+            className="w-full py-5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-2xl font-black uppercase shadow-lg shadow-blue-200 active:scale-95 transition-transform flex items-center justify-center gap-3"
+          >
+            <Shield size={22} />
+            <div className="text-left">
+              <div className="text-sm">Administrador</div>
+              <div className="text-[9px] font-semibold opacity-80">Requiere clave de acceso</div>
+            </div>
+          </button>
+          <button
+            onClick={() => {
+              localStorage.setItem(USER_ROLE_KEY, 'usuario');
+              onLogin('usuario');
+            }}
+            className="w-full py-5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-2xl font-black uppercase shadow-lg shadow-emerald-200 active:scale-95 transition-transform flex items-center justify-center gap-3"
+          >
+            <Eye size={22} />
+            <div className="text-left">
+              <div className="text-sm">Usuario</div>
+              <div className="text-[9px] font-semibold opacity-80">Solo órdenes pendientes y en proceso</div>
+            </div>
+          </button>
+        </div>
+        <p className="text-center text-[8px] text-slate-300 mt-6 font-medium uppercase">Administración - Asesorías Integrales CyJ</p>
+      </div>
+      {showPwdModal && (
+        <PasswordModal
+          onUnlock={(pwd) => {
+            if (checkAdminPwd(pwd)) {
+              localStorage.setItem(USER_ROLE_KEY, 'admin');
+              onLogin('admin');
+            }
+          }}
+          onCancel={() => setShowPwdModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function PasswordModal({ onUnlock, onCancel }: { onUnlock: (pwd: string) => void; onCancel: () => void }) {
+  const [pwd, setPwd] = useState('');
+  const [error, setError] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6">
+      <div className="bg-white rounded-3xl p-8 shadow-2xl w-full max-w-sm">
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Shield size={28} className="text-blue-600" />
+          </div>
+          <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter">Acceso Restringido</h2>
+          <p className="text-xs text-slate-400 mt-1 font-medium">Ingresa la clave de administración</p>
+        </div>
+        <form onSubmit={(e) => {
+          e.preventDefault();
+          if (checkAdminPwd(pwd)) { onUnlock(pwd); }
+          else { setError('Clave incorrecta'); setPwd(''); }
+        }} className="space-y-4">
+          <input
+            ref={inputRef}
+            type="password"
+            value={pwd}
+            onChange={(e) => { setPwd(e.target.value); setError(''); }}
+            placeholder="Clave de administración"
+            className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-200 font-bold text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          {error && <p className="text-red-500 text-xs font-bold text-center">{error}</p>}
+          <button type="submit" className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-transform">Ingresar</button>
+          <button type="button" onClick={onCancel} className="w-full py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold text-xs uppercase hover:bg-slate-200 transition-colors">Cancelar</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function LagunaNorteApp() {
   const { workOrders, loading, syncing, apiAvailable, lastSync, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders();
   const { workAreas, personnel, zones, updateWorkAreas, updatePersonnel, updateZones } = useConfigData();
@@ -1927,6 +2108,13 @@ export default function LagunaNorteApp() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [userRole, setUserRole] = useState<UserRole | null>(() => {
+    try {
+      const saved = localStorage.getItem(USER_ROLE_KEY);
+      // Only auto-restore 'usuario' role, NOT admin (requires password each time)
+      return saved === 'usuario' ? 'usuario' : null;
+    } catch { return null; }
+  });
 
   const handleSaveOT = useCallback(async (data: Partial<WorkOrder>) => {
     if (data.id) {
@@ -1985,15 +2173,6 @@ export default function LagunaNorteApp() {
   }, []);
 
   // Counts
-  const pendientes = workOrders.filter(o => o.status === 'Pendiente').length;
-  const enProceso = workOrders.filter(o => o.status === 'En Proceso').length;
-  const terminadas = workOrders.filter(o => o.status === 'Terminada').length;
-
-  // Filtered OTs
-  const filteredOTs = statusFilter === 'Todas'
-    ? workOrders
-    : workOrders.filter(o => o.status === statusFilter);
-
   // Helper: get work area color for an OT by matching its activities
   const getWorkAreaForOT = useCallback((ot: WorkOrder) => {
     for (const wa of workAreas) {
@@ -2016,6 +2195,29 @@ export default function LagunaNorteApp() {
     );
   }
 
+  // Show profile login if no role is selected
+  if (!userRole) {
+    return <ProfileLogin onLogin={(role) => setUserRole(role)} />;
+  }
+
+  // Visible work orders: usuario can only see Pendiente and En Proceso
+  const visibleWorkOrders = userRole === 'usuario'
+    ? workOrders.filter(o => o.status === 'Pendiente' || o.status === 'En Proceso')
+    : workOrders;
+
+  const visiblePendientes = visibleWorkOrders.filter(o => o.status === 'Pendiente').length;
+  const visibleEnProceso = visibleWorkOrders.filter(o => o.status === 'En Proceso').length;
+  const visibleTerminadas = visibleWorkOrders.filter(o => o.status === 'Terminada').length;
+
+  const filteredOTs = statusFilter === 'Todas'
+    ? visibleWorkOrders
+    : visibleWorkOrders.filter(o => o.status === statusFilter);
+
+  // Available filters based on role
+  const availableFilters: StatusFilter[] = userRole === 'usuario'
+    ? ['Todas', 'Pendiente', 'En Proceso']
+    : ['Todas', 'Pendiente', 'En Proceso', 'Terminada'];
+
   return (
     <div className="max-w-xl mx-auto min-h-screen pb-24 bg-slate-50">
       {/* ─── Header ─── */}
@@ -2028,16 +2230,32 @@ export default function LagunaNorteApp() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <div className={`flex items-center gap-1 text-[8px] font-black uppercase px-2 py-1 rounded-full ${userRole === 'admin' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
+            {userRole === 'admin' ? <Shield size={10} /> : <Eye size={10} />}
+            <span className="hidden sm:inline">{userRole === 'admin' ? 'Admin' : 'Usuario'}</span>
+          </div>
           <div className={`flex items-center gap-1 text-[8px] font-black uppercase ${syncing ? 'text-amber-500' : apiAvailable ? 'text-emerald-500' : 'text-orange-400'}`}>
             <RefreshCw size={10} className={syncing ? 'animate-spin' : ''} />
             <span className="hidden sm:inline">{syncing ? 'Sincronizando...' : apiAvailable ? 'En línea' : 'Sin BD'}</span>
           </div>
+          {userRole === 'admin' && (
+            <button
+              onClick={() => setIsAdminOpen(true)}
+              className="p-2 bg-slate-100 rounded-full text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+              title="Administración"
+            >
+              <Settings size={16} />
+            </button>
+          )}
           <button
-            onClick={() => setIsAdminOpen(true)}
-            className="p-2 bg-slate-100 rounded-full text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-            title="Administración"
+            onClick={() => {
+              localStorage.removeItem(USER_ROLE_KEY);
+              setUserRole(null);
+            }}
+            className="p-2 bg-slate-100 rounded-full text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+            title="Cerrar sesión"
           >
-            <Settings size={16} />
+            <LogOut size={16} />
           </button>
           <img src="/logo-empresa.png" alt="CyJ" className="h-10 rounded-lg" />
         </div>
@@ -2049,21 +2267,21 @@ export default function LagunaNorteApp() {
           <div className="flex-1 bg-red-50 border border-red-100 p-3 rounded-2xl flex items-center gap-2">
             <Clock className="text-red-500 flex-shrink-0" size={16} />
             <div>
-              <div className="text-xl font-black text-red-600 leading-none">{pendientes}</div>
+              <div className="text-xl font-black text-red-600 leading-none">{visiblePendientes}</div>
               <div className="text-[8px] font-bold text-red-400 uppercase tracking-wider">Pendientes</div>
             </div>
           </div>
           <div className="flex-1 bg-amber-50 border border-amber-100 p-3 rounded-2xl flex items-center gap-2">
             <Zap className="text-amber-500 flex-shrink-0" size={16} />
             <div>
-              <div className="text-xl font-black text-amber-600 leading-none">{enProceso}</div>
+              <div className="text-xl font-black text-amber-600 leading-none">{visibleEnProceso}</div>
               <div className="text-[8px] font-bold text-amber-400 uppercase tracking-wider">En Proceso</div>
             </div>
           </div>
           <div className="flex-1 bg-emerald-50 border border-emerald-100 p-3 rounded-2xl flex items-center gap-2">
             <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={16} />
             <div>
-              <div className="text-xl font-black text-emerald-600 leading-none">{terminadas}</div>
+              <div className="text-xl font-black text-emerald-600 leading-none">{visibleTerminadas}</div>
               <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider">Listas</div>
             </div>
           </div>
@@ -2089,7 +2307,7 @@ export default function LagunaNorteApp() {
 
         {/* ─── Status Filter Tabs ─── */}
         <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl">
-          {(['Todas', 'Pendiente', 'En Proceso', 'Terminada'] as StatusFilter[]).map(s => (
+          {availableFilters.map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
@@ -2169,6 +2387,7 @@ export default function LagunaNorteApp() {
         workAreas={workAreas}
         personnel={personnel}
         zones={zones}
+        userRole={userRole}
       />
 
       <AdminPanel
