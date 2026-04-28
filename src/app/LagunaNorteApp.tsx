@@ -32,7 +32,8 @@ interface Zone {
 
 const DEFAULT_WORK_AREAS: WorkArea[] = [
   { id: 'jardineria', name: 'Jardinería', activities: ['Corte De Pasto', 'Desmalezado', 'Poda de Arbustos', 'Riego'], color: 'bg-green-600' },
-  { id: 'recoleccion', name: 'Recolección y Aseo', activities: ['Barrido De Calles', 'Recolección De Basura', 'Limpieza de Quinchos', 'Limpieza Áreas Comunes'], color: 'bg-orange-500' },
+  { id: 'aseo', name: 'Aseo', activities: ['Limpieza de Quinchos', 'Limpieza Áreas Comunes', 'Barrido De Calles'], color: 'bg-pink-500' },
+  { id: 'recoleccion', name: 'Recolección', activities: ['Recolección De Basura', 'Barrido De Calles'], color: 'bg-orange-500' },
   { id: 'piscinas', name: 'Piscinas y Laguna', activities: ['Limpieza De Piscina', 'Llenado De Piscina', 'Mantención Laguna', 'Tratamiento de Agua'], color: 'bg-cyan-500' },
   { id: 'mantenciones', name: 'Mantenciones', activities: ['Reparación Estructural', 'Pintura', 'Mantención General', 'Carpintería'], color: 'bg-purple-500' },
   { id: 'electricas', name: 'Eléctricas y Mantenciones', activities: ['Reparación Eléctrica', 'Mantención Eléctrica', 'Iluminación'], color: 'bg-yellow-500' },
@@ -41,9 +42,9 @@ const DEFAULT_WORK_AREAS: WorkArea[] = [
 const DEFAULT_PERSONNEL: Personnel[] = [
   { id: 'p1', name: 'Cesar Edmundo Adasme Aravena', workAreaId: 'jardineria' },
   { id: 'p2', name: 'Luis Alejandro Torres Bustos', workAreaId: 'jardineria' },
-  { id: 'p3', name: 'Chris Esther Godoy Espinoza', workAreaId: 'recoleccion' },
+  { id: 'p3', name: 'Chris Esther Godoy Espinoza', workAreaId: 'aseo' },
+  { id: 'p5', name: 'Marie Ginette Dorne', workAreaId: 'aseo' },
   { id: 'p4', name: 'Erik Alberto Arteaga Burgos', workAreaId: 'recoleccion' },
-  { id: 'p5', name: 'Marie Ginette Dorne', workAreaId: 'recoleccion' },
   { id: 'p6', name: 'Jeantelus Fleurissaint', workAreaId: 'recoleccion' },
   { id: 'p7', name: 'Paulo César Toro Pino', workAreaId: 'piscinas' },
   { id: 'p8', name: 'Macario Enrique Manríquez Trigo', workAreaId: 'piscinas' },
@@ -77,13 +78,24 @@ const DEFAULT_ZONES: Zone[] = [
 
 /* ─── Other constants ─── */
 
+/* Icon lookup map — stores icon components by string name to avoid React rendering issues */
+const ICON_MAP: Record<string, React.ElementType> = {
+  Leaf,
+  Brush,
+  Trash2,
+  Droplets,
+  Wrench,
+  Zap,
+};
+
 const CATEGORIES = [
-  { id: 'jardineria', name: 'Jardinería', icon: Leaf, color: 'bg-green-600', workAreaId: 'jardineria' },
-  { id: 'recoleccion', name: 'Recolección y Aseo', icon: Trash2, color: 'bg-orange-500', workAreaId: 'recoleccion' },
-  { id: 'piscinas', name: 'Piscinas y Laguna', icon: Droplets, color: 'bg-cyan-500', workAreaId: 'piscinas' },
-  { id: 'mantenciones', name: 'Mantenciones', icon: Wrench, color: 'bg-purple-500', workAreaId: 'mantenciones' },
-  { id: 'electricas', name: 'Eléctricas', icon: Zap, color: 'bg-yellow-500', workAreaId: 'electricas' },
-] as const;
+  { id: 'jardineria', name: 'Jardinería', icon: 'Leaf', color: 'bg-green-600', workAreaId: 'jardineria' },
+  { id: 'aseo', name: 'Aseo', icon: 'Brush', color: 'bg-pink-500', workAreaId: 'aseo' },
+  { id: 'recoleccion', name: 'Recolección', icon: 'Trash2', color: 'bg-orange-500', workAreaId: 'recoleccion' },
+  { id: 'piscinas', name: 'Piscinas y Laguna', icon: 'Droplets', color: 'bg-cyan-500', workAreaId: 'piscinas' },
+  { id: 'mantenciones', name: 'Mantenciones', icon: 'Wrench', color: 'bg-purple-500', workAreaId: 'mantenciones' },
+  { id: 'electricas', name: 'Eléctricas', icon: 'Zap', color: 'bg-yellow-500', workAreaId: 'electricas' },
+];
 
 const STATUS_CONFIG: Record<string, { color: string; text: string }> = {
   'Pendiente': { color: 'bg-red-500', text: 'text-red-500' },
@@ -141,6 +153,8 @@ const COUNTER_KEY = 'laguna_norte_ot_counter';
 const WORK_AREAS_KEY = 'laguna_norte_work_areas';
 const PERSONNEL_KEY = 'laguna_norte_personnel';
 const ZONES_KEY = 'laguna_norte_zones';
+const CONFIG_VERSION_KEY = 'laguna_norte_config_version';
+const CONFIG_VERSION = 2; // Increment when default data changes to force reload
 
 function readFromLocalStorage(): WorkOrder[] {
   try {
@@ -180,6 +194,12 @@ function writeCounterToLocalStorage(counter: number) {
 
 function loadWorkAreas(): WorkArea[] {
   try {
+    const needsReload = localStorage.getItem(CONFIG_VERSION_KEY) !== String(CONFIG_VERSION);
+    if (needsReload) {
+      localStorage.setItem(WORK_AREAS_KEY, JSON.stringify(DEFAULT_WORK_AREAS));
+      localStorage.setItem(CONFIG_VERSION_KEY, String(CONFIG_VERSION));
+      return DEFAULT_WORK_AREAS;
+    }
     const raw = localStorage.getItem(WORK_AREAS_KEY);
     if (!raw) {
       localStorage.setItem(WORK_AREAS_KEY, JSON.stringify(DEFAULT_WORK_AREAS));
@@ -200,6 +220,11 @@ function saveWorkAreas(areas: WorkArea[]) {
 
 function loadPersonnel(): Personnel[] {
   try {
+    const needsReload = localStorage.getItem(CONFIG_VERSION_KEY) !== String(CONFIG_VERSION);
+    if (needsReload) {
+      localStorage.setItem(PERSONNEL_KEY, JSON.stringify(DEFAULT_PERSONNEL));
+      return DEFAULT_PERSONNEL;
+    }
     const raw = localStorage.getItem(PERSONNEL_KEY);
     if (!raw) {
       localStorage.setItem(PERSONNEL_KEY, JSON.stringify(DEFAULT_PERSONNEL));
@@ -2049,11 +2074,11 @@ export default function LagunaNorteApp() {
           <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Crear OT rápida</p>
           <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
             {CATEGORIES.map(cat => {
-              const IconComp = cat.icon;
+              const IconComp = ICON_MAP[cat.icon];
               return (
                 <button key={cat.id} onClick={() => handleCreateFromCategory(cat)} className="flex-shrink-0 flex flex-col items-center gap-1.5 active:scale-90 transition-transform">
                   <div className={`${cat.color} w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg`}>
-                    <IconComp size={18} />
+                    {IconComp && <IconComp size={18} />}
                   </div>
                   <span className="text-[7px] font-black uppercase text-slate-500">{cat.name}</span>
                 </button>
