@@ -140,14 +140,23 @@ function migrateWorkOrder(ot: any): WorkOrder {
   } else {
     activities = [];
   }
+  // Auto-repair: if status is En Proceso or Terminada but startedAt is missing, use createdAt as fallback
+  let startedAt = ot.startedAt ?? null;
+  if (!startedAt && (ot.status === 'En Proceso' || ot.status === 'Terminada') && ot.createdAt) {
+    startedAt = ot.createdAt;
+  }
+  let completedAt = ot.completedAt ?? null;
+  if (!completedAt && ot.status === 'Terminada' && ot.createdAt) {
+    completedAt = ot.createdAt;
+  }
   return {
     ...ot,
     collaborators,
     activities,
     photosBefore: Array.isArray(ot.photosBefore) ? ot.photosBefore : [],
     photosAfter: Array.isArray(ot.photosAfter) ? ot.photosAfter : [],
-    startedAt: ot.startedAt ?? null,
-    completedAt: ot.completedAt ?? null,
+    startedAt,
+    completedAt,
   };
 }
 
@@ -2165,39 +2174,41 @@ function AdminDashboard({
   const hasActiveFilters = filterArea !== 'todas' || filterPerson !== 'todos' || filterStatus !== 'todas' || filterDateFrom || filterDateTo;
 
   // Time calculations (on filtered data)
-  const completedOrders = filteredOrders.filter(o => o.status === 'Terminada' && o.startedAt && o.completedAt);
-  const inProcessOrders = filteredOrders.filter(o => o.status === 'En Proceso' && o.startedAt);
+  const completedOrders = filteredOrders.filter(o => o.status === 'Terminada');
+  const inProcessOrders = filteredOrders.filter(o => o.status === 'En Proceso');
   const pendingOrders = filteredOrders.filter(o => o.status === 'Pendiente');
 
-  // Average times for completed orders
-  const avgWaitTime = completedOrders.length > 0
-    ? completedOrders.reduce((sum, o) => sum + ((o.startedAt! - o.createdAt) || 0), 0) / completedOrders.length
+  // Average times for completed orders (use startedAt if available, fallback to createdAt)
+  const completedWithTimes = completedOrders.filter(o => o.completedAt);
+  const avgWaitTime = completedWithTimes.length > 0
+    ? completedWithTimes.reduce((sum, o) => sum + (((o.startedAt ?? o.createdAt) - o.createdAt) || 0), 0) / completedWithTimes.length
     : 0;
-  const avgProcessTime = completedOrders.length > 0
-    ? completedOrders.reduce((sum, o) => sum + ((o.completedAt! - o.startedAt!) || 0), 0) / completedOrders.length
+  const avgProcessTime = completedWithTimes.length > 0
+    ? completedWithTimes.reduce((sum, o) => sum + ((o.completedAt! - (o.startedAt ?? o.createdAt)) || 0), 0) / completedWithTimes.length
     : 0;
-  const avgTotalTime = completedOrders.length > 0
-    ? completedOrders.reduce((sum, o) => sum + ((o.completedAt! - o.createdAt) || 0), 0) / completedOrders.length
+  const avgTotalTime = completedWithTimes.length > 0
+    ? completedWithTimes.reduce((sum, o) => sum + ((o.completedAt! - o.createdAt) || 0), 0) / completedWithTimes.length
     : 0;
 
-  // Currently in-process duration
+  // Currently in-process duration (use startedAt if available, fallback to createdAt)
   const avgCurrentProcessTime = inProcessOrders.length > 0
-    ? inProcessOrders.reduce((sum, o) => sum + ((now - o.startedAt!) || 0), 0) / inProcessOrders.length
+    ? inProcessOrders.reduce((sum, o) => sum + ((now - (o.startedAt ?? o.createdAt)) || 0), 0) / inProcessOrders.length
     : 0;
 
   // Per-personnel metrics (on filtered data)
   const personnelMetrics = personnel.map(p => {
     const personOrders = filteredOrders.filter(o =>
-      o.collaborators.includes(p.name) && o.startedAt
+      o.collaborators.includes(p.name)
     );
     const completedByPerson = personOrders.filter(o => o.status === 'Terminada' && o.completedAt);
     const inProcessByPerson = personOrders.filter(o => o.status === 'En Proceso');
+    const pendingByPerson = personOrders.filter(o => o.status === 'Pendiente');
 
     const avgTime = completedByPerson.length > 0
-      ? completedByPerson.reduce((sum, o) => sum + ((o.completedAt! - o.startedAt!) || 0), 0) / completedByPerson.length
+      ? completedByPerson.reduce((sum, o) => sum + ((o.completedAt! - (o.startedAt ?? o.createdAt)) || 0), 0) / completedByPerson.length
       : 0;
 
-    const totalTime = completedByPerson.reduce((sum, o) => sum + ((o.completedAt! - o.startedAt!) || 0), 0);
+    const totalTime = completedByPerson.reduce((sum, o) => sum + ((o.completedAt! - (o.startedAt ?? o.createdAt)) || 0), 0);
 
     return {
       id: p.id,
@@ -2207,6 +2218,7 @@ function AdminDashboard({
       totalOrders: personOrders.length,
       completedOrders: completedByPerson.length,
       inProcessOrders: inProcessByPerson.length,
+      pendingOrders: pendingByPerson.length,
       avgTime,
       totalTime,
     };
@@ -2217,12 +2229,12 @@ function AdminDashboard({
     const areaOrders = filteredOrders.filter(o =>
       o.activities.some(a => wa.activities.includes(a))
     );
-    const completedArea = areaOrders.filter(o => o.status === 'Terminada' && o.startedAt && o.completedAt);
+    const completedArea = areaOrders.filter(o => o.status === 'Terminada' && o.completedAt);
     const inProcessArea = areaOrders.filter(o => o.status === 'En Proceso');
     const pendingArea = areaOrders.filter(o => o.status === 'Pendiente');
 
     const avgTime = completedArea.length > 0
-      ? completedArea.reduce((sum, o) => sum + ((o.completedAt! - o.startedAt!) || 0), 0) / completedArea.length
+      ? completedArea.reduce((sum, o) => sum + ((o.completedAt! - (o.startedAt ?? o.createdAt)) || 0), 0) / completedArea.length
       : 0;
 
     return {
@@ -2237,15 +2249,15 @@ function AdminDashboard({
     };
   }).filter(am => am.total > 0 || !hasActiveFilters).sort((a, b) => b.total - a.total);
 
-  // Detailed OT list with time info (on filtered data)
+  // Detailed OT list with time info (on filtered data) — show ALL orders, not just those with startedAt
   const ordersWithTime = filteredOrders
-    .filter(o => o.startedAt)
     .map(o => {
       const wa = workAreas.find(wa => o.activities.some(a => wa.activities.includes(a)));
-      const processTime = o.completedAt ? o.completedAt - o.startedAt! : (o.status === 'En Proceso' ? now - o.startedAt! : 0);
-      const waitTime = o.startedAt - o.createdAt;
+      const effectiveStartedAt = o.startedAt ?? (o.status === 'En Proceso' || o.status === 'Terminada' ? o.createdAt : null);
+      const processTime = o.completedAt && effectiveStartedAt ? o.completedAt - effectiveStartedAt : (o.status === 'En Proceso' && effectiveStartedAt ? now - effectiveStartedAt : 0);
+      const waitTime = effectiveStartedAt ? effectiveStartedAt - o.createdAt : 0;
       const totalTime = o.completedAt ? o.completedAt - o.createdAt : (o.status === 'En Proceso' ? now - o.createdAt : 0);
-      return { ...o, wa, processTime, waitTime, totalTime };
+      return { ...o, wa, processTime, waitTime, totalTime, effectiveStartedAt };
     })
     .sort((a, b) => b.createdAt - a.createdAt);
 
@@ -2785,12 +2797,15 @@ function AdminDashboard({
                       <p className="text-[8px] font-black text-blue-500 uppercase">Creada</p>
                       <p className="text-[10px] font-bold text-slate-600">{formatDateTime(ot.createdAt)}</p>
                     </div>
-                    {ot.startedAt && (
+                    {(ot.startedAt || ot.status === 'En Proceso' || ot.status === 'Terminada') && (
                       <div className="relative">
                         <div className="absolute -left-[17px] top-0.5 w-3 h-3 bg-amber-500 rounded-full border-2 border-white"></div>
                         <p className="text-[8px] font-black text-amber-500 uppercase">En Proceso</p>
-                        <p className="text-[10px] font-bold text-slate-600">{formatDateTime(ot.startedAt)}</p>
-                        <p className="text-[8px] text-slate-400 font-medium">Espera: {formatDuration(ot.startedAt - ot.createdAt)}</p>
+                        <p className="text-[10px] font-bold text-slate-600">{formatDateTime(ot.startedAt ?? ot.createdAt)}</p>
+                        {!ot.startedAt && ot.status !== 'Pendiente' && (
+                          <p className="text-[7px] text-amber-400 font-medium italic">Hora no registrada, se usa fecha de creación</p>
+                        )}
+                        <p className="text-[8px] text-slate-400 font-medium">Espera: {formatDuration((ot.startedAt ?? ot.createdAt) - ot.createdAt)}</p>
                       </div>
                     )}
                     {ot.completedAt && (
@@ -2837,7 +2852,7 @@ function AdminDashboard({
               {ordersWithTime.length === 0 && (
                 <div className="text-center py-12">
                   <Timer className="mx-auto text-slate-200 mb-3" size={40} />
-                  <p className="text-slate-300 text-xs font-bold uppercase">No hay OTs con registros de tiempo</p>
+                  <p className="text-slate-300 text-xs font-bold uppercase">No hay órdenes de trabajo</p>
                 </div>
               )}
             </>

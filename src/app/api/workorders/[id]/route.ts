@@ -49,10 +49,27 @@ export async function PUT(
     if (body.collaborators !== undefined) data.collaborators = Array.isArray(body.collaborators) ? body.collaborators : [];
     if (body.zoneName !== undefined) data.zoneName = body.zoneName;
     if (body.description !== undefined) data.description = body.description;
-    if (body.status !== undefined) data.status = body.status;
     if (body.photosBefore !== undefined) data.photosBefore = Array.isArray(body.photosBefore) ? body.photosBefore : [];
     if (body.photosAfter !== undefined) data.photosAfter = Array.isArray(body.photosAfter) ? body.photosAfter : [];
+
     // Auto-track startedAt/completedAt when status changes
+    if (body.status !== undefined) {
+      data.status = body.status;
+      // Fetch current record to check for auto-timestamps
+      const current = await db.workOrder.findUnique({ where: { id } });
+      if (current) {
+        if (body.status === 'En Proceso' && !current.startedAt && body.startedAt === undefined) {
+          data.startedAt = new Date();
+        }
+        if (body.status === 'Terminada' && !current.completedAt && body.completedAt === undefined) {
+          data.completedAt = new Date();
+          if (!current.startedAt && body.startedAt === undefined) {
+            data.startedAt = current.createdAt;
+          }
+        }
+      }
+    }
+    // Explicit timestamp overrides take precedence
     if (body.startedAt !== undefined) data.startedAt = body.startedAt ? new Date(body.startedAt) : null;
     if (body.completedAt !== undefined) data.completedAt = body.completedAt ? new Date(body.completedAt) : null;
 
