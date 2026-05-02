@@ -3,20 +3,20 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model WorkOrder {
   id            String   @id
   otId          String
-  activities    String   // JSON array stored as string
-  collaborators String   // JSON array stored as string
-  zoneName      String
+  activities    String[] @default([])
+  collaborators String[] @default([])
+  zoneName      String   @default("")
   description   String   @default("")
   status        String   @default("Pendiente")
-  photosBefore  String   @default("[]") // JSON array of base64 strings
-  photosAfter   String   @default("[]") // JSON array of base64 strings
+  photosBefore  String[] @default([])
+  photosAfter   String[] @default([])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }

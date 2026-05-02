@@ -5,59 +5,27 @@ import { db } from '@/lib/db';
 function serializeWorkOrder(row: {
   id: string;
   otId: string;
-  activities: string;
-  collaborators: string;
+  activities: string[];
+  collaborators: string[];
   zoneName: string;
   description: string;
   status: string;
-  photosBefore: string;
-  photosAfter: string;
+  photosBefore: string[];
+  photosAfter: string[];
   createdAt: Date;
   updatedAt: Date;
 }) {
-  let activities: string[];
-  try {
-    const parsed = JSON.parse(row.activities);
-    activities = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    activities = [];
-  }
-
-  let collaborators: string[];
-  try {
-    const parsed = JSON.parse(row.collaborators);
-    collaborators = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    collaborators = [];
-  }
-
-  let photosBefore: string[];
-  try {
-    const parsed = JSON.parse(row.photosBefore);
-    photosBefore = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    photosBefore = [];
-  }
-
-  let photosAfter: string[];
-  try {
-    const parsed = JSON.parse(row.photosAfter);
-    photosAfter = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    photosAfter = [];
-  }
-
   return {
     id: row.id,
     otId: row.otId,
-    activities,
-    collaborators,
+    activities: Array.isArray(row.activities) ? row.activities : [],
+    collaborators: Array.isArray(row.collaborators) ? row.collaborators : [],
     zoneName: row.zoneName,
     description: row.description,
     status: row.status,
     createdAt: new Date(row.createdAt).getTime(),
-    photosBefore,
-    photosAfter,
+    photosBefore: Array.isArray(row.photosBefore) ? row.photosBefore : [],
+    photosAfter: Array.isArray(row.photosAfter) ? row.photosAfter : [],
   };
 }
 
@@ -85,13 +53,13 @@ export async function POST(request: NextRequest) {
 
     const id = body.id || crypto.randomUUID();
     const otId = body.otId || '';
-    const activities = JSON.stringify(Array.isArray(body.activities) ? body.activities : []);
-    const collaborators = JSON.stringify(Array.isArray(body.collaborators) ? body.collaborators : []);
+    const activities = Array.isArray(body.activities) ? body.activities : [];
+    const collaborators = Array.isArray(body.collaborators) ? body.collaborators : [];
     const zoneName = body.zoneName || '';
     const description = body.description || '';
     const status = body.status || 'Pendiente';
-    const photosBefore = JSON.stringify(Array.isArray(body.photosBefore) ? body.photosBefore : []);
-    const photosAfter = JSON.stringify(Array.isArray(body.photosAfter) ? body.photosAfter : []);
+    const photosBefore = Array.isArray(body.photosBefore) ? body.photosBefore : [];
+    const photosAfter = Array.isArray(body.photosAfter) ? body.photosAfter : [];
 
     const row = await db.workOrder.create({
       data: {
