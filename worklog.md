@@ -45,3 +45,28 @@ Stage Summary:
 - Visual separator "Otras áreas" distinguishes other-area personnel
 - Server running on port 3000, Caddy proxy on port 81
 - Build verified: all features present in JS bundle
+---
+Task ID: 2
+Agent: Main Agent
+Task: Deploy to Supabase - migrate from SQLite to PostgreSQL
+
+Work Log:
+- Attempted to create Supabase account via browser automation (blocked by hCaptcha)
+- Attempted GitHub OAuth login via browser (blocked by GitHub auth requirement)
+- Attempted Vercel integration via browser (requires GitHub login)
+- Changed Prisma schema from SQLite to PostgreSQL provider
+- Updated WorkOrder model to use native String[] arrays instead of JSON strings
+- Updated API routes (workorders/route.ts, workorders/[id]/route.ts) for native arrays
+- Updated .env with PostgreSQL placeholder URL for Supabase
+- Initialized Supabase config (supabase/config.toml, supabase/.gitignore)
+- Built project successfully with PostgreSQL schema
+- Committed and pushed to GitHub
+- Vercel auto-deployed successfully (SHA: 72ee0db, Status: success)
+
+Stage Summary:
+- Code is fully migrated to PostgreSQL/Supabase
+- Build passes with native PostgreSQL array types
+- Vercel deployment successful at https://laguna-norte-gestion.vercel.app
+- PENDING: User needs to create Supabase project and add DATABASE_URL env var to Vercel
+- The app currently won't connect to a database since DATABASE_URL is a placeholder
+- Local dev still works with localStorage fallback
