@@ -6,7 +6,7 @@ import {
   MapPin, ChevronRight, X, Plus, ClipboardList,
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye,
-  BarChart3, Timer, TrendingUp, CalendarDays, Activity
+  BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -2122,14 +2122,52 @@ function AdminDashboard({
   workAreas: WorkArea[];
   personnel: Personnel[];
 }) {
-  const [dashTab, setDashTab] = useState<'resumen' | 'personal' | 'areas' | 'detalle'>('resumen');
+  const [dashTab, setDashTab] = useState<'resumen' | 'personal' | 'areas' | 'detalle' | 'exportar'>('resumen');
+  // Filter state
+  const [filterArea, setFilterArea] = useState<string>('todas');
+  const [filterPerson, setFilterPerson] = useState<string>('todos');
+  const [filterStatus, setFilterStatus] = useState<string>('todas');
+  const [filterDateFrom, setFilterDateFrom] = useState<string>('');
+  const [filterDateTo, setFilterDateTo] = useState<string>('');
+  const [showFilters, setShowFilters] = useState(false);
 
   if (!isOpen) return null;
 
-  // Time calculations
-  const completedOrders = workOrders.filter(o => o.status === 'Terminada' && o.startedAt && o.completedAt);
-  const inProcessOrders = workOrders.filter(o => o.status === 'En Proceso' && o.startedAt);
-  const pendingOrders = workOrders.filter(o => o.status === 'Pendiente');
+  const now = Date.now();
+
+  // ─── Apply filters to work orders ───
+  const filteredOrders = workOrders.filter(o => {
+    // Area filter
+    if (filterArea !== 'todas') {
+      const wa = workAreas.find(wa => wa.id === filterArea);
+      if (wa && !o.activities.some(a => wa.activities.includes(a))) return false;
+    }
+    // Person filter
+    if (filterPerson !== 'todos') {
+      const person = personnel.find(p => p.id === filterPerson);
+      if (person && !o.collaborators.includes(person.name)) return false;
+    }
+    // Status filter
+    if (filterStatus !== 'todas' && o.status !== filterStatus) return false;
+    // Date from
+    if (filterDateFrom) {
+      const from = new Date(filterDateFrom).getTime();
+      if (o.createdAt < from) return false;
+    }
+    // Date to
+    if (filterDateTo) {
+      const to = new Date(filterDateTo).getTime() + 86400000; // include full day
+      if (o.createdAt > to) return false;
+    }
+    return true;
+  });
+
+  const hasActiveFilters = filterArea !== 'todas' || filterPerson !== 'todos' || filterStatus !== 'todas' || filterDateFrom || filterDateTo;
+
+  // Time calculations (on filtered data)
+  const completedOrders = filteredOrders.filter(o => o.status === 'Terminada' && o.startedAt && o.completedAt);
+  const inProcessOrders = filteredOrders.filter(o => o.status === 'En Proceso' && o.startedAt);
+  const pendingOrders = filteredOrders.filter(o => o.status === 'Pendiente');
 
   // Average times for completed orders
   const avgWaitTime = completedOrders.length > 0
@@ -2143,14 +2181,13 @@ function AdminDashboard({
     : 0;
 
   // Currently in-process duration
-  const now = Date.now();
   const avgCurrentProcessTime = inProcessOrders.length > 0
     ? inProcessOrders.reduce((sum, o) => sum + ((now - o.startedAt!) || 0), 0) / inProcessOrders.length
     : 0;
 
-  // Per-personnel metrics
+  // Per-personnel metrics (on filtered data)
   const personnelMetrics = personnel.map(p => {
-    const personOrders = workOrders.filter(o =>
+    const personOrders = filteredOrders.filter(o =>
       o.collaborators.includes(p.name) && o.startedAt
     );
     const completedByPerson = personOrders.filter(o => o.status === 'Terminada' && o.completedAt);
@@ -2173,11 +2210,11 @@ function AdminDashboard({
       avgTime,
       totalTime,
     };
-  }).sort((a, b) => b.totalOrders - a.totalOrders);
+  }).filter(pm => pm.totalOrders > 0 || !hasActiveFilters).sort((a, b) => b.totalOrders - a.totalOrders);
 
-  // Per-area metrics
+  // Per-area metrics (on filtered data)
   const areaMetrics = workAreas.map(wa => {
-    const areaOrders = workOrders.filter(o =>
+    const areaOrders = filteredOrders.filter(o =>
       o.activities.some(a => wa.activities.includes(a))
     );
     const completedArea = areaOrders.filter(o => o.status === 'Terminada' && o.startedAt && o.completedAt);
@@ -2198,10 +2235,10 @@ function AdminDashboard({
       pending: pendingArea.length,
       avgTime,
     };
-  }).sort((a, b) => b.total - a.total);
+  }).filter(am => am.total > 0 || !hasActiveFilters).sort((a, b) => b.total - a.total);
 
-  // Detailed OT list with time info
-  const ordersWithTime = workOrders
+  // Detailed OT list with time info (on filtered data)
+  const ordersWithTime = filteredOrders
     .filter(o => o.startedAt)
     .map(o => {
       const wa = workAreas.find(wa => o.activities.some(a => wa.activities.includes(a)));
@@ -2212,11 +2249,194 @@ function AdminDashboard({
     })
     .sort((a, b) => b.createdAt - a.createdAt);
 
+  // ─── Export CSV ───
+  const exportCSV = () => {
+    const BOM = '\uFEFF';
+    const headers = ['Código', 'Actividades', 'Responsables', 'Zona', 'Estado', 'Fecha Creación', 'Hora Creación', 'Fecha Inicio', 'Hora Inicio', 'Fecha Término', 'Hora Término', 'Tiempo Espera', 'Tiempo Proceso', 'Tiempo Total', 'Observaciones'];
+    const rows = filteredOrders.map(o => {
+      const wa = workAreas.find(wa => o.activities.some(a => wa.activities.includes(a)));
+      return [
+        o.otId,
+        `"${(o.activities ?? []).join('; ')}"`,
+        `"${(o.collaborators ?? []).join('; ')}"`,
+        o.zoneName,
+        o.status,
+        o.createdAt ? formatDate(o.createdAt) : '',
+        o.createdAt ? new Date(o.createdAt).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }) : '',
+        o.startedAt ? formatDate(o.startedAt) : '',
+        o.startedAt ? new Date(o.startedAt).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }) : '',
+        o.completedAt ? formatDate(o.completedAt) : '',
+        o.completedAt ? new Date(o.completedAt).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }) : '',
+        o.startedAt ? formatDuration(o.startedAt - o.createdAt) : '',
+        o.startedAt && o.completedAt ? formatDuration(o.completedAt - o.startedAt) : '',
+        o.completedAt ? formatDuration(o.completedAt - o.createdAt) : '',
+        `"${(o.description ?? '').replace(/"/g, '""')}"`,
+      ].join(',');
+    });
+    const filterLabel = hasActiveFilters
+      ? `_${[filterArea !== 'todas' ? workAreas.find(wa => wa.id === filterArea)?.name : '', filterPerson !== 'todos' ? personnel.find(p => p.id === filterPerson)?.name?.split(' ').slice(0, 2).join('') : '', filterStatus !== 'todas' ? filterStatus : ''].filter(Boolean).join('_')}`
+      : '';
+    const csv = BOM + headers.join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `LagunaNorte_OTs${filterLabel}_${formatDate(Date.now()).replace(/\//g, '-')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ─── Export Personnel Report CSV ───
+  const exportPersonnelCSV = () => {
+    const BOM = '\uFEFF';
+    const headers = ['Nombre', 'Área', 'OTs Totales', 'OTs Terminadas', 'OTs En Proceso', 'Tiempo Prom/OT', 'Tiempo Total Trabajado'];
+    const rows = personnelMetrics.map(pm => [
+      `"${pm.name}"`,
+      pm.workAreaName,
+      pm.totalOrders,
+      pm.completedOrders,
+      pm.inProcessOrders,
+      pm.avgTime > 0 ? formatDuration(pm.avgTime) : '',
+      pm.totalTime > 0 ? formatDuration(pm.totalTime) : '',
+    ].join(','));
+    const csv = BOM + headers.join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `LagunaNorte_Personal_${formatDate(Date.now()).replace(/\//g, '-')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ─── Export Area Report CSV ───
+  const exportAreaCSV = () => {
+    const BOM = '\uFEFF';
+    const headers = ['Área', 'OTs Totales', 'Pendientes', 'En Proceso', 'Terminadas', 'Tiempo Promedio'];
+    const rows = areaMetrics.map(am => [
+      `"${am.name}"`,
+      am.total,
+      am.pending,
+      am.inProcess,
+      am.completed,
+      am.avgTime > 0 ? formatDuration(am.avgTime) : '',
+    ].join(','));
+    const csv = BOM + headers.join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `LagunaNorte_Areas_${formatDate(Date.now()).replace(/\//g, '-')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ─── Export PDF Report ───
+  const exportPDF = async () => {
+    const { jsPDF } = await import('jspdf');
+    const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'landscape' });
+    const pw = doc.internal.pageSize.getWidth();
+    const ph = doc.internal.pageSize.getHeight();
+    const m = 30;
+
+    // Header
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.setTextColor(31, 40, 107);
+    doc.text('REPORTE DE GESTION - LAGUNA NORTE', pw / 2, 30, { align: 'center' });
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    const filterDesc = hasActiveFilters
+      ? `Filtros: ${[filterArea !== 'todas' ? 'Area: ' + (workAreas.find(wa => wa.id === filterArea)?.name ?? '') : '', filterPerson !== 'todos' ? 'Persona: ' + (personnel.find(p => p.id === filterPerson)?.name ?? '') : '', filterStatus !== 'todas' ? 'Estado: ' + filterStatus : '', filterDateFrom ? 'Desde: ' + filterDateFrom : '', filterDateTo ? 'Hasta: ' + filterDateTo : ''].filter(Boolean).join(' | ')}`
+      : 'Sin filtros aplicados';
+    doc.text(filterDesc, pw / 2, 45, { align: 'center' });
+    doc.text(`Generado: ${formatDateTime(Date.now())} | Total OTs: ${filteredOrders.length}`, pw / 2, 56, { align: 'center' });
+
+    // Summary box
+    let y = 70;
+    doc.setFillColor(240, 242, 250);
+    doc.roundedRect(m, y, pw - m * 2, 35, 3, 3, 'F');
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(31, 40, 107);
+    doc.text(`Pendientes: ${pendingOrders.length}`, m + 15, y + 15);
+    doc.text(`En Proceso: ${inProcessOrders.length}`, m + 130, y + 15);
+    doc.text(`Terminadas: ${completedOrders.length}`, m + 250, y + 15);
+    doc.text(`Eficiencia: ${filteredOrders.length > 0 ? Math.round((completedOrders.length / filteredOrders.length) * 100) : 0}%`, m + 380, y + 15);
+    if (avgProcessTime > 0) doc.text(`Prom Proceso: ${formatDuration(avgProcessTime)}`, m + 490, y + 15);
+    if (avgWaitTime > 0) doc.text(`Prom Espera: ${formatDuration(avgWaitTime)}`, m + 490, y + 28);
+
+    y += 50;
+
+    // Table header
+    const cols = [40, 100, 90, 55, 55, 65, 65, 65, 55, 55];
+    const colLabels = ['Codigo', 'Actividades', 'Responsables', 'Zona', 'Estado', 'Creacion', 'Inicio', 'Termino', 'T Espera', 'T Proceso'];
+    let x = m;
+
+    doc.setFillColor(31, 40, 107);
+    doc.rect(m, y, pw - m * 2, 18, 'F');
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(255, 255, 255);
+    cols.forEach((w, i) => { doc.text(colLabels[i], x + 3, y + 12); x += w; });
+    y += 18;
+
+    // Table rows
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(30, 30, 30);
+    let rowIndex = 0;
+    for (const o of filteredOrders) {
+      if (y > ph - 40) { doc.addPage(); y = 30; }
+      if (rowIndex % 2 === 0) { doc.setFillColor(250, 250, 255); doc.rect(m, y, pw - m * 2, 16, 'F'); }
+      x = m;
+      const row = [
+        o.otId,
+        (o.activities ?? []).join(', '),
+        (o.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', '),
+        o.zoneName,
+        o.status,
+        formatDateTime(o.createdAt),
+        formatDateTime(o.startedAt),
+        formatDateTime(o.completedAt),
+        o.startedAt ? formatDuration(o.startedAt - o.createdAt) : '',
+        o.startedAt && o.completedAt ? formatDuration(o.completedAt - o.startedAt) : '',
+      ];
+      row.forEach((val, i) => {
+        const maxW = cols[i] - 6;
+        const lines = doc.splitTextToSize(String(val), maxW);
+        doc.text(lines[0] || '', x + 3, y + 10);
+        x += cols[i];
+      });
+      y += 16;
+      rowIndex++;
+    }
+
+    // Footer
+    doc.setFontSize(6);
+    doc.setTextColor(150, 150, 150);
+    doc.text('Documento generado por Sistema de Gestion Laguna Norte', pw / 2, ph - 15, { align: 'center' });
+
+    const filterLabel = hasActiveFilters
+      ? `_${[filterArea !== 'todas' ? workAreas.find(wa => wa.id === filterArea)?.name : '', filterPerson !== 'todos' ? personnel.find(p => p.id === filterPerson)?.name?.split(' ').slice(0, 2).join('') : '', filterStatus !== 'todas' ? filterStatus : ''].filter(Boolean).join('_')}`
+      : '';
+    doc.save(`LagunaNorte_Reporte${filterLabel}_${formatDate(Date.now()).replace(/\//g, '-')}.pdf`);
+  };
+
+  const clearFilters = () => {
+    setFilterArea('todas');
+    setFilterPerson('todos');
+    setFilterStatus('todas');
+    setFilterDateFrom('');
+    setFilterDateTo('');
+  };
+
   const tabs: { key: typeof dashTab; label: string; icon: React.ElementType }[] = [
     { key: 'resumen', label: 'Resumen', icon: BarChart3 },
     { key: 'personal', label: 'Personal', icon: User },
     { key: 'areas', label: 'Áreas', icon: Activity },
     { key: 'detalle', label: 'Detalle', icon: Timer },
+    { key: 'exportar', label: 'Exportar', icon: Download },
   ];
 
   return (
@@ -2227,16 +2447,115 @@ function AdminDashboard({
           <h2 className="text-lg font-black text-white uppercase tracking-tighter flex items-center gap-2">
             <BarChart3 size={18} /> Dashboard
           </h2>
-          <button onClick={onClose} className="p-2 bg-white/20 rounded-full text-white"><X size={20} /></button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`p-2 rounded-full transition-colors ${showFilters ? 'bg-white/30' : 'bg-white/10 hover:bg-white/20'}`}
+              title="Filtros"
+            >
+              <Filter size={16} className="text-white" />
+            </button>
+            <button onClick={onClose} className="p-2 bg-white/20 rounded-full text-white"><X size={20} /></button>
+          </div>
         </div>
 
+        {/* Filter Bar */}
+        {showFilters && (
+          <div className="bg-slate-50 border-b border-slate-200 p-3 space-y-2 sticky top-[60px] z-10">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                <Filter size={10} /> Filtros de Datos
+              </span>
+              {hasActiveFilters && (
+                <button onClick={clearFilters} className="text-[8px] font-black text-red-500 uppercase hover:text-red-700">
+                  Limpiar
+                </button>
+              )}
+            </div>
+            <div>
+              <label className="text-[8px] font-black text-slate-400 uppercase ml-1">Área</label>
+              <select
+                value={filterArea}
+                onChange={e => setFilterArea(e.target.value)}
+                className="w-full p-2 rounded-xl bg-white border border-slate-200 text-[10px] font-bold text-slate-700 mt-0.5"
+              >
+                <option value="todas">Todas las áreas</option>
+                {workAreas.map(wa => (
+                  <option key={wa.id} value={wa.id}>{wa.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[8px] font-black text-slate-400 uppercase ml-1">Trabajador</label>
+              <select
+                value={filterPerson}
+                onChange={e => setFilterPerson(e.target.value)}
+                className="w-full p-2 rounded-xl bg-white border border-slate-200 text-[10px] font-bold text-slate-700 mt-0.5"
+              >
+                <option value="todos">Todo el personal</option>
+                {personnel.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[8px] font-black text-slate-400 uppercase ml-1">Estado</label>
+              <select
+                value={filterStatus}
+                onChange={e => setFilterStatus(e.target.value)}
+                className="w-full p-2 rounded-xl bg-white border border-slate-200 text-[10px] font-bold text-slate-700 mt-0.5"
+              >
+                <option value="todas">Todos los estados</option>
+                <option value="Pendiente">Pendiente</option>
+                <option value="En Proceso">En Proceso</option>
+                <option value="Terminada">Terminada</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase ml-1">Desde</label>
+                <input
+                  type="date"
+                  value={filterDateFrom}
+                  onChange={e => setFilterDateFrom(e.target.value)}
+                  className="w-full p-2 rounded-xl bg-white border border-slate-200 text-[10px] font-bold text-slate-700 mt-0.5"
+                />
+              </div>
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase ml-1">Hasta</label>
+                <input
+                  type="date"
+                  value={filterDateTo}
+                  onChange={e => setFilterDateTo(e.target.value)}
+                  className="w-full p-2 rounded-xl bg-white border border-slate-200 text-[10px] font-bold text-slate-700 mt-0.5"
+                />
+              </div>
+            </div>
+            {hasActiveFilters && (
+              <div className="flex items-center gap-1 pt-1">
+                <span className="text-[8px] font-bold text-blue-500">{filteredOrders.length} de {workOrders.length} OTs</span>
+                <span className="text-[7px] text-slate-300">|</span>
+                {filterArea !== 'todas' && (
+                  <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[7px] font-bold">{workAreas.find(wa => wa.id === filterArea)?.name}</span>
+                )}
+                {filterPerson !== 'todos' && (
+                  <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded text-[7px] font-bold">{personnel.find(p => p.id === filterPerson)?.name?.split(' ').slice(0, 2).join(' ')}</span>
+                )}
+                {filterStatus !== 'todas' && (
+                  <span className="px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded text-[7px] font-bold">{filterStatus}</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Tabs */}
-        <div className="flex border-b border-slate-100 bg-white sticky top-[60px] z-10">
+        <div className="flex border-b border-slate-100 bg-white sticky top-[60px] z-10" style={{ top: showFilters ? undefined : '60px' }}>
           {tabs.map(tab => (
             <button
               key={tab.key}
               onClick={() => setDashTab(tab.key)}
-              className={`flex-1 py-3 text-[8px] font-black uppercase transition-all flex flex-col items-center gap-1 ${
+              className={`flex-1 py-3 text-[7px] font-black uppercase transition-all flex flex-col items-center gap-1 ${
                 dashTab === tab.key
                   ? 'text-blue-600 border-b-2 border-blue-600'
                   : 'text-slate-400 hover:text-slate-600'
@@ -2283,7 +2602,7 @@ function AdminDashboard({
                     <TrendingUp size={14} className="text-blue-500" />
                     <span className="text-[8px] font-black text-blue-400 uppercase">Eficiencia</span>
                   </div>
-                  <p className="text-2xl font-black text-blue-600">{workOrders.length > 0 ? Math.round((completedOrders.length / workOrders.length) * 100) : 0}%</p>
+                  <p className="text-2xl font-black text-blue-600">{filteredOrders.length > 0 ? Math.round((completedOrders.length / filteredOrders.length) * 100) : 0}%</p>
                   <p className="text-[8px] text-blue-400 font-medium mt-1">Tasa completado</p>
                 </div>
               </div>
@@ -2295,21 +2614,21 @@ function AdminDashboard({
                 </h3>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500">Espera (creación → inicio)</span>
+                    <span className="text-xs font-bold text-slate-500">Espera (creacion - inicio)</span>
                     <span className="text-sm font-black text-red-600">{formatDuration(avgWaitTime)}</span>
                   </div>
                   <div className="w-full bg-slate-200 rounded-full h-2">
                     <div className="bg-red-400 h-2 rounded-full" style={{ width: `${Math.min(100, (avgWaitTime / Math.max(avgTotalTime, 1)) * 100)}%` }}></div>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500">Proceso (inicio → término)</span>
+                    <span className="text-xs font-bold text-slate-500">Proceso (inicio - termino)</span>
                     <span className="text-sm font-black text-amber-600">{formatDuration(avgProcessTime)}</span>
                   </div>
                   <div className="w-full bg-slate-200 rounded-full h-2">
                     <div className="bg-amber-400 h-2 rounded-full" style={{ width: `${Math.min(100, (avgProcessTime / Math.max(avgTotalTime, 1)) * 100)}%` }}></div>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500">Total (creación → término)</span>
+                    <span className="text-xs font-bold text-slate-500">Total (creacion - termino)</span>
                     <span className="text-sm font-black text-emerald-600">{formatDuration(avgTotalTime)}</span>
                   </div>
                   <div className="w-full bg-slate-200 rounded-full h-2">
@@ -2320,13 +2639,13 @@ function AdminDashboard({
 
               {/* Completion Rate Visual */}
               <div className="bg-slate-50 rounded-2xl p-4">
-                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Distribución de Estados</h3>
+                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Distribucion de Estados</h3>
                 <div className="flex h-4 rounded-full overflow-hidden bg-slate-200">
-                  {workOrders.length > 0 && (
+                  {filteredOrders.length > 0 && (
                     <>
-                      <div className="bg-red-400 transition-all" style={{ width: `${(pendingOrders.length / workOrders.length) * 100}%` }}></div>
-                      <div className="bg-amber-400 transition-all" style={{ width: `${(inProcessOrders.length / workOrders.length) * 100}%` }}></div>
-                      <div className="bg-emerald-400 transition-all" style={{ width: `${(completedOrders.length / workOrders.length) * 100}%` }}></div>
+                      <div className="bg-red-400 transition-all" style={{ width: `${(pendingOrders.length / filteredOrders.length) * 100}%` }}></div>
+                      <div className="bg-amber-400 transition-all" style={{ width: `${(inProcessOrders.length / filteredOrders.length) * 100}%` }}></div>
+                      <div className="bg-emerald-400 transition-all" style={{ width: `${(completedOrders.length / filteredOrders.length) * 100}%` }}></div>
                     </>
                   )}
                 </div>
@@ -2343,7 +2662,7 @@ function AdminDashboard({
           {dashTab === 'personal' && (
             <>
               <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3 mb-2">
-                <p className="text-[9px] font-bold text-blue-600">Rendimiento del personal basado en tiempos registrados de las órdenes de trabajo</p>
+                <p className="text-[9px] font-bold text-blue-600">Rendimiento del personal basado en tiempos registrados de las ordenes de trabajo</p>
               </div>
               {personnelMetrics.map(pm => (
                 <div key={pm.id} className="bg-slate-50 rounded-2xl p-3">
@@ -2369,7 +2688,7 @@ function AdminDashboard({
                       <p className="text-[7px] font-bold text-slate-400">En Proceso</p>
                     </div>
                     <div className="bg-white rounded-xl p-2">
-                      <p className="text-xs font-black text-blue-600">{pm.avgTime > 0 ? formatDuration(pm.avgTime) : '—'}</p>
+                      <p className="text-xs font-black text-blue-600">{pm.avgTime > 0 ? formatDuration(pm.avgTime) : '--'}</p>
                       <p className="text-[7px] font-bold text-slate-400">Prom/OT</p>
                     </div>
                   </div>
@@ -2393,7 +2712,7 @@ function AdminDashboard({
           {dashTab === 'areas' && (
             <>
               <div className="bg-purple-50 border border-purple-100 rounded-2xl p-3 mb-2">
-                <p className="text-[9px] font-bold text-purple-600">Rendimiento por área de trabajo basado en tiempos de OTs completadas</p>
+                <p className="text-[9px] font-bold text-purple-600">Rendimiento por area de trabajo basado en tiempos de OTs completadas</p>
               </div>
               {areaMetrics.map(am => (
                 <div key={am.id} className="bg-slate-50 rounded-2xl p-3">
@@ -2427,7 +2746,7 @@ function AdminDashboard({
                       <p className="text-[6px] font-bold text-slate-400 uppercase">Term</p>
                     </div>
                     <div className="bg-white rounded-lg p-1.5">
-                      <p className="text-[10px] font-black text-blue-600">{am.avgTime > 0 ? formatDuration(am.avgTime) : '—'}</p>
+                      <p className="text-[10px] font-black text-blue-600">{am.avgTime > 0 ? formatDuration(am.avgTime) : '--'}</p>
                       <p className="text-[6px] font-bold text-slate-400 uppercase">Prom</p>
                     </div>
                   </div>
@@ -2519,6 +2838,132 @@ function AdminDashboard({
                 <div className="text-center py-12">
                   <Timer className="mx-auto text-slate-200 mb-3" size={40} />
                   <p className="text-slate-300 text-xs font-bold uppercase">No hay OTs con registros de tiempo</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ─── Exportar Tab ─── */}
+          {dashTab === 'exportar' && (
+            <>
+              <div className="bg-amber-50 border border-amber-100 rounded-2xl p-3 mb-2">
+                <p className="text-[9px] font-bold text-amber-700 flex items-center gap-1">
+                  <Filter size={12} /> Usa los filtros de la parte superior para seleccionar los datos que deseas exportar
+                </p>
+              </div>
+
+              {/* Current filter summary */}
+              <div className="bg-slate-50 rounded-2xl p-3">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Datos seleccionados</p>
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="bg-white rounded-xl p-2">
+                    <p className="text-xl font-black text-blue-600">{filteredOrders.length}</p>
+                    <p className="text-[7px] font-bold text-slate-400 uppercase">OTs a exportar</p>
+                  </div>
+                  <div className="bg-white rounded-xl p-2">
+                    <p className="text-xl font-black text-emerald-600">{completedOrders.length}</p>
+                    <p className="text-[7px] font-bold text-slate-400 uppercase">Terminadas</p>
+                  </div>
+                </div>
+                {hasActiveFilters && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {filterArea !== 'todas' && (
+                      <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full text-[7px] font-bold">
+                        Area: {workAreas.find(wa => wa.id === filterArea)?.name}
+                      </span>
+                    )}
+                    {filterPerson !== 'todos' && (
+                      <span className="px-2 py-0.5 bg-purple-50 text-purple-600 rounded-full text-[7px] font-bold">
+                        Persona: {personnel.find(p => p.id === filterPerson)?.name?.split(' ').slice(0, 2).join(' ')}
+                      </span>
+                    )}
+                    {filterStatus !== 'todas' && (
+                      <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[7px] font-bold">
+                        Estado: {filterStatus}
+                      </span>
+                    )}
+                    {filterDateFrom && (
+                      <span className="px-2 py-0.5 bg-green-50 text-green-600 rounded-full text-[7px] font-bold">
+                        Desde: {filterDateFrom}
+                      </span>
+                    )}
+                    {filterDateTo && (
+                      <span className="px-2 py-0.5 bg-green-50 text-green-600 rounded-full text-[7px] font-bold">
+                        Hasta: {filterDateTo}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {!hasActiveFilters && (
+                  <p className="text-[8px] text-slate-400 font-medium mt-2 text-center">Sin filtros - se exportaran todas las OTs</p>
+                )}
+              </div>
+
+              {/* Export OT Data */}
+              <div className="bg-slate-50 rounded-2xl p-3">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                  <FileSpreadsheet size={12} /> Exportar Ordenes de Trabajo
+                </p>
+                <div className="space-y-2">
+                  <button
+                    onClick={exportCSV}
+                    disabled={filteredOrders.length === 0}
+                    className="w-full py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2 disabled:opacity-30 active:scale-95 transition-transform"
+                  >
+                    <FileSpreadsheet size={16} /> Exportar CSV (Excel)
+                  </button>
+                  <button
+                    onClick={exportPDF}
+                    disabled={filteredOrders.length === 0}
+                    className="w-full py-3 bg-red-600 text-white rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2 disabled:opacity-30 active:scale-95 transition-transform"
+                  >
+                    <FileText size={16} /> Exportar PDF (Reporte)
+                  </button>
+                </div>
+                <p className="text-[7px] text-slate-400 font-medium mt-2 text-center">
+                  CSV: Todas las OTs con fechas, horarios y tiempos | PDF: Reporte formateado con tabla resumen
+                </p>
+              </div>
+
+              {/* Export Personnel Report */}
+              <div className="bg-slate-50 rounded-2xl p-3">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                  <User size={12} /> Exportar Reporte de Personal
+                </p>
+                <button
+                  onClick={exportPersonnelCSV}
+                  disabled={personnelMetrics.length === 0}
+                  className="w-full py-3 bg-purple-600 text-white rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2 disabled:opacity-30 active:scale-95 transition-transform"
+                >
+                  <FileSpreadsheet size={16} /> Reporte Personal CSV
+                </button>
+                <p className="text-[7px] text-slate-400 font-medium mt-2 text-center">
+                  Nombre, area, OTs totales, terminadas, en proceso, tiempo promedio, tiempo total
+                </p>
+              </div>
+
+              {/* Export Area Report */}
+              <div className="bg-slate-50 rounded-2xl p-3">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                  <Activity size={12} /> Exportar Reporte por Areas
+                </p>
+                <button
+                  onClick={exportAreaCSV}
+                  disabled={areaMetrics.length === 0}
+                  className="w-full py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2 disabled:opacity-30 active:scale-95 transition-transform"
+                >
+                  <FileSpreadsheet size={16} /> Reporte Areas CSV
+                </button>
+                <p className="text-[7px] text-slate-400 font-medium mt-2 text-center">
+                  Area, OTs totales, pendientes, en proceso, terminadas, tiempo promedio
+                </p>
+              </div>
+
+              {filteredOrders.length === 0 && (
+                <div className="text-center py-8">
+                  <Download className="mx-auto text-slate-200 mb-3" size={40} />
+                  <p className="text-slate-300 text-xs font-bold uppercase">No hay datos para exportar</p>
+                  <p className="text-[8px] text-slate-300 mt-1">Ajusta los filtros para seleccionar datos</p>
                 </div>
               )}
             </>
