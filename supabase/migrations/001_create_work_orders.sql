@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS "WorkOrder" (
   "status" TEXT DEFAULT 'Pendiente',
   "photosBefore" TEXT[] DEFAULT ARRAY[]::TEXT[],
   "photosAfter" TEXT[] DEFAULT ARRAY[]::TEXT[],
+  "startedAt" TIMESTAMP(3),
+  "completedAt" TIMESTAMP(3),
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -5,7 +5,8 @@ import {
   Zap, Leaf, Brush, Trash2, Wrench, Clock, CheckCircle2,
   MapPin, ChevronRight, X, Plus, ClipboardList,
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
-  RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye
+  RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye,
+  BarChart3, Timer, TrendingUp, CalendarDays, Activity
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -114,6 +115,8 @@ interface WorkOrder {
   description: string;
   status: string;
   createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
   photosBefore: string[];
   photosAfter: string[];
 }
@@ -143,6 +146,8 @@ function migrateWorkOrder(ot: any): WorkOrder {
     activities,
     photosBefore: Array.isArray(ot.photosBefore) ? ot.photosBefore : [],
     photosAfter: Array.isArray(ot.photosAfter) ? ot.photosAfter : [],
+    startedAt: ot.startedAt ?? null,
+    completedAt: ot.completedAt ?? null,
   };
 }
 
@@ -339,6 +344,8 @@ function useWorkOrders() {
     writeCounterToLocalStorage(counter);
     const otId = `OT-${String(counter).padStart(4, '0')}`;
 
+    const status = data.status ?? 'Pendiente';
+    const now = Date.now();
     const newOT: WorkOrder = {
       id: generateUniqueId(),
       otId,
@@ -346,8 +353,10 @@ function useWorkOrders() {
       collaborators: data.collaborators ?? [],
       zoneName: data.zoneName ?? '',
       description: data.description ?? '',
-      status: data.status ?? 'Pendiente',
-      createdAt: Date.now(),
+      status,
+      createdAt: now,
+      startedAt: (status === 'En Proceso' || status === 'Terminada') ? (data.startedAt ?? now) : null,
+      completedAt: status === 'Terminada' ? (data.completedAt ?? now) : null,
       photosBefore: data.photosBefore ?? [],
       photosAfter: data.photosAfter ?? [],
     };
@@ -485,6 +494,27 @@ function generateUniqueId(): string {
 function formatDate(ts: number): string {
   const d = new Date(ts);
   return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+}
+
+function formatDateTime(ts: number | null): string {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, '0');
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${mins}`;
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 0) return '—';
+  const minutes = Math.floor(ms / 60000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return `${days}d ${hours % 24}h`;
+  if (hours > 0) return `${hours}h ${minutes % 60}m`;
+  return `${minutes}m`;
 }
 
 function compressImage(file: File, maxWidth: number, quality: number): Promise<string> {
@@ -1662,6 +1692,55 @@ function ModalInner({
             })}
           </div>
 
+          {/* 8. Timestamps (Admin only) */}
+          {userRole === 'admin' && editingItem?.id && (
+            <div className="bg-slate-50 rounded-2xl p-4 space-y-2">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                <CalendarDays size={10} /> Registro de Fechas y Horarios
+              </p>
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <span className="text-[9px] font-bold text-blue-500 uppercase">Creada</span>
+                  <span className="text-[10px] font-bold text-slate-600">{formatDateTime(editingItem.createdAt ?? null)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[9px] font-bold text-amber-500 uppercase">En Proceso</span>
+                  <span className="text-[10px] font-bold text-slate-600">{formatDateTime(editingItem.startedAt ?? null)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[9px] font-bold text-emerald-500 uppercase">Terminada</span>
+                  <span className="text-[10px] font-bold text-slate-600">{formatDateTime(editingItem.completedAt ?? null)}</span>
+                </div>
+                {editingItem.startedAt && (
+                  <div className="pt-1.5 border-t border-slate-200">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[8px] font-bold text-slate-400">Tiempo de espera</span>
+                      <span className="text-[9px] font-black text-red-500">{formatDuration(editingItem.startedAt - (editingItem.createdAt ?? 0))}</span>
+                    </div>
+                    {editingItem.completedAt && (
+                      <>
+                        <div className="flex justify-between items-center mt-1">
+                          <span className="text-[8px] font-bold text-slate-400">Tiempo de proceso</span>
+                          <span className="text-[9px] font-black text-amber-500">{formatDuration(editingItem.completedAt - editingItem.startedAt)}</span>
+                        </div>
+                        <div className="flex justify-between items-center mt-1">
+                          <span className="text-[8px] font-bold text-slate-400">Tiempo total</span>
+                          <span className="text-[9px] font-black text-emerald-500">{formatDuration(editingItem.completedAt - (editingItem.createdAt ?? 0))}</span>
+                        </div>
+                      </>
+                    )}
+                    {!editingItem.completedAt && (
+                      <div className="flex justify-between items-center mt-1">
+                        <span className="text-[8px] font-bold text-slate-400">En proceso durante</span>
+                        <span className="text-[9px] font-black text-amber-500">{formatDuration(Date.now() - editingItem.startedAt)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {validationError && (
             <p className="text-red-500 text-xs font-bold text-center">{validationError}</p>
           )}
@@ -1868,9 +1947,12 @@ async function buildPDF(ot: Partial<WorkOrder>) {
   const activities = (ot.activities ?? []).join(', ');
   const collaborators = (ot.collaborators ?? []).join(', ');
   const dateStr = ot.createdAt ? formatDate(ot.createdAt) : '';
+  const startedStr = ot.startedAt ? formatDateTime(ot.startedAt) : '—';
+  const completedStr = ot.completedAt ? formatDateTime(ot.completedAt) : '—';
 
-  y = drawTableRow('Actividad', activities, 'Fecha', dateStr, y);
+  y = drawTableRow('Actividad', activities, 'Fecha Creación', dateStr, y);
   y = drawTableRow('Estado', ot.status ?? '', 'Zona', ot.zoneName ?? '', y);
+  y = drawTableRow('Inicio', startedStr, 'Término', completedStr, y);
   y = drawTableRow('Codigo', ot.otId ?? '', 'Area', activities, y);
 
   const respSplit = doc.splitTextToSize(collaborators, tblW - labelColW - 12);
@@ -2025,6 +2107,428 @@ async function buildPDF(ot: Partial<WorkOrder>) {
 
 type StatusFilter = 'Todas' | 'Pendiente' | 'En Proceso' | 'Terminada';
 
+/* ─── Admin Dashboard Component ─── */
+
+function AdminDashboard({
+  isOpen,
+  onClose,
+  workOrders,
+  workAreas,
+  personnel,
+}: {
+  isOpen: boolean;
+  workOrders: WorkOrder[];
+  onClose: () => void;
+  workAreas: WorkArea[];
+  personnel: Personnel[];
+}) {
+  const [dashTab, setDashTab] = useState<'resumen' | 'personal' | 'areas' | 'detalle'>('resumen');
+
+  if (!isOpen) return null;
+
+  // Time calculations
+  const completedOrders = workOrders.filter(o => o.status === 'Terminada' && o.startedAt && o.completedAt);
+  const inProcessOrders = workOrders.filter(o => o.status === 'En Proceso' && o.startedAt);
+  const pendingOrders = workOrders.filter(o => o.status === 'Pendiente');
+
+  // Average times for completed orders
+  const avgWaitTime = completedOrders.length > 0
+    ? completedOrders.reduce((sum, o) => sum + ((o.startedAt! - o.createdAt) || 0), 0) / completedOrders.length
+    : 0;
+  const avgProcessTime = completedOrders.length > 0
+    ? completedOrders.reduce((sum, o) => sum + ((o.completedAt! - o.startedAt!) || 0), 0) / completedOrders.length
+    : 0;
+  const avgTotalTime = completedOrders.length > 0
+    ? completedOrders.reduce((sum, o) => sum + ((o.completedAt! - o.createdAt) || 0), 0) / completedOrders.length
+    : 0;
+
+  // Currently in-process duration
+  const now = Date.now();
+  const avgCurrentProcessTime = inProcessOrders.length > 0
+    ? inProcessOrders.reduce((sum, o) => sum + ((now - o.startedAt!) || 0), 0) / inProcessOrders.length
+    : 0;
+
+  // Per-personnel metrics
+  const personnelMetrics = personnel.map(p => {
+    const personOrders = workOrders.filter(o =>
+      o.collaborators.includes(p.name) && o.startedAt
+    );
+    const completedByPerson = personOrders.filter(o => o.status === 'Terminada' && o.completedAt);
+    const inProcessByPerson = personOrders.filter(o => o.status === 'En Proceso');
+
+    const avgTime = completedByPerson.length > 0
+      ? completedByPerson.reduce((sum, o) => sum + ((o.completedAt! - o.startedAt!) || 0), 0) / completedByPerson.length
+      : 0;
+
+    const totalTime = completedByPerson.reduce((sum, o) => sum + ((o.completedAt! - o.startedAt!) || 0), 0);
+
+    return {
+      id: p.id,
+      name: p.name,
+      workAreaName: workAreas.find(wa => wa.id === p.workAreaId)?.name ?? 'Sin área',
+      workAreaColor: workAreas.find(wa => wa.id === p.workAreaId)?.color ?? 'bg-gray-500',
+      totalOrders: personOrders.length,
+      completedOrders: completedByPerson.length,
+      inProcessOrders: inProcessByPerson.length,
+      avgTime,
+      totalTime,
+    };
+  }).sort((a, b) => b.totalOrders - a.totalOrders);
+
+  // Per-area metrics
+  const areaMetrics = workAreas.map(wa => {
+    const areaOrders = workOrders.filter(o =>
+      o.activities.some(a => wa.activities.includes(a))
+    );
+    const completedArea = areaOrders.filter(o => o.status === 'Terminada' && o.startedAt && o.completedAt);
+    const inProcessArea = areaOrders.filter(o => o.status === 'En Proceso');
+    const pendingArea = areaOrders.filter(o => o.status === 'Pendiente');
+
+    const avgTime = completedArea.length > 0
+      ? completedArea.reduce((sum, o) => sum + ((o.completedAt! - o.startedAt!) || 0), 0) / completedArea.length
+      : 0;
+
+    return {
+      id: wa.id,
+      name: wa.name,
+      color: wa.color,
+      total: areaOrders.length,
+      completed: completedArea.length,
+      inProcess: inProcessArea.length,
+      pending: pendingArea.length,
+      avgTime,
+    };
+  }).sort((a, b) => b.total - a.total);
+
+  // Detailed OT list with time info
+  const ordersWithTime = workOrders
+    .filter(o => o.startedAt)
+    .map(o => {
+      const wa = workAreas.find(wa => o.activities.some(a => wa.activities.includes(a)));
+      const processTime = o.completedAt ? o.completedAt - o.startedAt! : (o.status === 'En Proceso' ? now - o.startedAt! : 0);
+      const waitTime = o.startedAt - o.createdAt;
+      const totalTime = o.completedAt ? o.completedAt - o.createdAt : (o.status === 'En Proceso' ? now - o.createdAt : 0);
+      return { ...o, wa, processTime, waitTime, totalTime };
+    })
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  const tabs: { key: typeof dashTab; label: string; icon: React.ElementType }[] = [
+    { key: 'resumen', label: 'Resumen', icon: BarChart3 },
+    { key: 'personal', label: 'Personal', icon: User },
+    { key: 'areas', label: 'Áreas', icon: Activity },
+    { key: 'detalle', label: 'Detalle', icon: Timer },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex justify-end">
+      <div className="bg-white w-full max-w-md h-full overflow-y-auto shadow-2xl no-scrollbar">
+        {/* Header */}
+        <div className="sticky top-0 z-10 bg-gradient-to-r from-blue-600 to-blue-700 p-4 flex justify-between items-center">
+          <h2 className="text-lg font-black text-white uppercase tracking-tighter flex items-center gap-2">
+            <BarChart3 size={18} /> Dashboard
+          </h2>
+          <button onClick={onClose} className="p-2 bg-white/20 rounded-full text-white"><X size={20} /></button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-slate-100 bg-white sticky top-[60px] z-10">
+          {tabs.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setDashTab(tab.key)}
+              className={`flex-1 py-3 text-[8px] font-black uppercase transition-all flex flex-col items-center gap-1 ${
+                dashTab === tab.key
+                  ? 'text-blue-600 border-b-2 border-blue-600'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <tab.icon size={14} />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* ─── Resumen Tab ─── */}
+          {dashTab === 'resumen' && (
+            <>
+              {/* Key Metrics Cards */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-red-50 border border-red-100 rounded-2xl p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Clock size={14} className="text-red-500" />
+                    <span className="text-[8px] font-black text-red-400 uppercase">Pendientes</span>
+                  </div>
+                  <p className="text-2xl font-black text-red-600">{pendingOrders.length}</p>
+                  <p className="text-[8px] text-red-400 font-medium mt-1">Esperando inicio</p>
+                </div>
+                <div className="bg-amber-50 border border-amber-100 rounded-2xl p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Activity size={14} className="text-amber-500" />
+                    <span className="text-[8px] font-black text-amber-400 uppercase">En Proceso</span>
+                  </div>
+                  <p className="text-2xl font-black text-amber-600">{inProcessOrders.length}</p>
+                  <p className="text-[8px] text-amber-400 font-medium mt-1">Prom: {formatDuration(avgCurrentProcessTime)}</p>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle2 size={14} className="text-emerald-500" />
+                    <span className="text-[8px] font-black text-emerald-400 uppercase">Terminadas</span>
+                  </div>
+                  <p className="text-2xl font-black text-emerald-600">{completedOrders.length}</p>
+                  <p className="text-[8px] text-emerald-400 font-medium mt-1">Completadas</p>
+                </div>
+                <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <TrendingUp size={14} className="text-blue-500" />
+                    <span className="text-[8px] font-black text-blue-400 uppercase">Eficiencia</span>
+                  </div>
+                  <p className="text-2xl font-black text-blue-600">{workOrders.length > 0 ? Math.round((completedOrders.length / workOrders.length) * 100) : 0}%</p>
+                  <p className="text-[8px] text-blue-400 font-medium mt-1">Tasa completado</p>
+                </div>
+              </div>
+
+              {/* Average Times */}
+              <div className="bg-slate-50 rounded-2xl p-4">
+                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                  <Timer size={12} /> Tiempos Promedio (OTs Terminadas)
+                </h3>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-500">Espera (creación → inicio)</span>
+                    <span className="text-sm font-black text-red-600">{formatDuration(avgWaitTime)}</span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-2">
+                    <div className="bg-red-400 h-2 rounded-full" style={{ width: `${Math.min(100, (avgWaitTime / Math.max(avgTotalTime, 1)) * 100)}%` }}></div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-500">Proceso (inicio → término)</span>
+                    <span className="text-sm font-black text-amber-600">{formatDuration(avgProcessTime)}</span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-2">
+                    <div className="bg-amber-400 h-2 rounded-full" style={{ width: `${Math.min(100, (avgProcessTime / Math.max(avgTotalTime, 1)) * 100)}%` }}></div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-500">Total (creación → término)</span>
+                    <span className="text-sm font-black text-emerald-600">{formatDuration(avgTotalTime)}</span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-2">
+                    <div className="bg-emerald-400 h-2 rounded-full" style={{ width: '100%' }}></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Completion Rate Visual */}
+              <div className="bg-slate-50 rounded-2xl p-4">
+                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Distribución de Estados</h3>
+                <div className="flex h-4 rounded-full overflow-hidden bg-slate-200">
+                  {workOrders.length > 0 && (
+                    <>
+                      <div className="bg-red-400 transition-all" style={{ width: `${(pendingOrders.length / workOrders.length) * 100}%` }}></div>
+                      <div className="bg-amber-400 transition-all" style={{ width: `${(inProcessOrders.length / workOrders.length) * 100}%` }}></div>
+                      <div className="bg-emerald-400 transition-all" style={{ width: `${(completedOrders.length / workOrders.length) * 100}%` }}></div>
+                    </>
+                  )}
+                </div>
+                <div className="flex justify-between mt-2">
+                  <span className="text-[8px] font-bold text-red-400">{pendingOrders.length} Pend.</span>
+                  <span className="text-[8px] font-bold text-amber-400">{inProcessOrders.length} Proc.</span>
+                  <span className="text-[8px] font-bold text-emerald-400">{completedOrders.length} Term.</span>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ─── Personal Tab ─── */}
+          {dashTab === 'personal' && (
+            <>
+              <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3 mb-2">
+                <p className="text-[9px] font-bold text-blue-600">Rendimiento del personal basado en tiempos registrados de las órdenes de trabajo</p>
+              </div>
+              {personnelMetrics.map(pm => (
+                <div key={pm.id} className="bg-slate-50 rounded-2xl p-3">
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <p className="font-black text-slate-800 text-xs">{pm.name}</p>
+                      <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-[7px] font-black uppercase text-white ${pm.workAreaColor}`}>
+                        {pm.workAreaName}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-black text-blue-600">{pm.totalOrders}</p>
+                      <p className="text-[7px] font-bold text-slate-400 uppercase">OTs</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-white rounded-xl p-2">
+                      <p className="text-xs font-black text-emerald-600">{pm.completedOrders}</p>
+                      <p className="text-[7px] font-bold text-slate-400">Terminadas</p>
+                    </div>
+                    <div className="bg-white rounded-xl p-2">
+                      <p className="text-xs font-black text-amber-600">{pm.inProcessOrders}</p>
+                      <p className="text-[7px] font-bold text-slate-400">En Proceso</p>
+                    </div>
+                    <div className="bg-white rounded-xl p-2">
+                      <p className="text-xs font-black text-blue-600">{pm.avgTime > 0 ? formatDuration(pm.avgTime) : '—'}</p>
+                      <p className="text-[7px] font-bold text-slate-400">Prom/OT</p>
+                    </div>
+                  </div>
+                  {pm.avgTime > 0 && (
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between text-[8px] font-bold text-slate-400 mb-1">
+                        <span>Tiempo total trabajado</span>
+                        <span className="text-slate-600">{formatDuration(pm.totalTime)}</span>
+                      </div>
+                      <div className="w-full bg-slate-200 rounded-full h-1.5">
+                        <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${Math.min(100, (pm.avgTime / Math.max(avgProcessTime, 1)) * 100)}%` }}></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ─── Areas Tab ─── */}
+          {dashTab === 'areas' && (
+            <>
+              <div className="bg-purple-50 border border-purple-100 rounded-2xl p-3 mb-2">
+                <p className="text-[9px] font-bold text-purple-600">Rendimiento por área de trabajo basado en tiempos de OTs completadas</p>
+              </div>
+              {areaMetrics.map(am => (
+                <div key={am.id} className="bg-slate-50 rounded-2xl p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-4 h-4 rounded-full ${am.color}`} />
+                      <span className="font-black text-slate-800 text-xs uppercase">{am.name}</span>
+                    </div>
+                    <span className="text-lg font-black text-slate-600">{am.total}</span>
+                  </div>
+                  <div className="flex h-3 rounded-full overflow-hidden bg-slate-200 mb-2">
+                    {am.total > 0 && (
+                      <>
+                        <div className="bg-red-400 transition-all" style={{ width: `${(am.pending / am.total) * 100}%` }}></div>
+                        <div className="bg-amber-400 transition-all" style={{ width: `${(am.inProcess / am.total) * 100}%` }}></div>
+                        <div className="bg-emerald-400 transition-all" style={{ width: `${(am.completed / am.total) * 100}%` }}></div>
+                      </>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1 text-center">
+                    <div className="bg-white rounded-lg p-1.5">
+                      <p className="text-[10px] font-black text-red-500">{am.pending}</p>
+                      <p className="text-[6px] font-bold text-slate-400 uppercase">Pend</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-1.5">
+                      <p className="text-[10px] font-black text-amber-500">{am.inProcess}</p>
+                      <p className="text-[6px] font-bold text-slate-400 uppercase">Proc</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-1.5">
+                      <p className="text-[10px] font-black text-emerald-500">{am.completed}</p>
+                      <p className="text-[6px] font-bold text-slate-400 uppercase">Term</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-1.5">
+                      <p className="text-[10px] font-black text-blue-600">{am.avgTime > 0 ? formatDuration(am.avgTime) : '—'}</p>
+                      <p className="text-[6px] font-bold text-slate-400 uppercase">Prom</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ─── Detalle Tab ─── */}
+          {dashTab === 'detalle' && (
+            <>
+              <div className="bg-slate-50 rounded-2xl p-3 mb-2">
+                <p className="text-[9px] font-bold text-slate-600 flex items-center gap-1">
+                  <CalendarDays size={12} /> Registro de fechas y horarios por cada orden de trabajo
+                </p>
+              </div>
+              {ordersWithTime.map(ot => (
+                <div key={ot.id} className="bg-slate-50 rounded-2xl p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-black bg-slate-200 px-2 py-0.5 rounded-full">{ot.otId}</span>
+                      <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
+                    </div>
+                    {ot.wa && (
+                      <span className={`px-2 py-0.5 rounded-full text-[7px] font-black uppercase text-white ${ot.wa.color}`}>
+                        {ot.wa.name}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] font-bold text-slate-700 mb-2 truncate">{(ot.activities ?? []).join(', ')}</p>
+
+                  {/* Timeline */}
+                  <div className="border-l-2 border-slate-200 ml-2 pl-3 space-y-2">
+                    <div className="relative">
+                      <div className="absolute -left-[17px] top-0.5 w-3 h-3 bg-blue-500 rounded-full border-2 border-white"></div>
+                      <p className="text-[8px] font-black text-blue-500 uppercase">Creada</p>
+                      <p className="text-[10px] font-bold text-slate-600">{formatDateTime(ot.createdAt)}</p>
+                    </div>
+                    {ot.startedAt && (
+                      <div className="relative">
+                        <div className="absolute -left-[17px] top-0.5 w-3 h-3 bg-amber-500 rounded-full border-2 border-white"></div>
+                        <p className="text-[8px] font-black text-amber-500 uppercase">En Proceso</p>
+                        <p className="text-[10px] font-bold text-slate-600">{formatDateTime(ot.startedAt)}</p>
+                        <p className="text-[8px] text-slate-400 font-medium">Espera: {formatDuration(ot.startedAt - ot.createdAt)}</p>
+                      </div>
+                    )}
+                    {ot.completedAt && (
+                      <div className="relative">
+                        <div className="absolute -left-[17px] top-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"></div>
+                        <p className="text-[8px] font-black text-emerald-500 uppercase">Terminada</p>
+                        <p className="text-[10px] font-bold text-slate-600">{formatDateTime(ot.completedAt)}</p>
+                        <p className="text-[8px] text-slate-400 font-medium">Proceso: {formatDuration(ot.processTime)}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Time Summary */}
+                  <div className="mt-2 flex gap-2">
+                    {ot.waitTime > 0 && (
+                      <span className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[8px] font-black">
+                        Espera: {formatDuration(ot.waitTime)}
+                      </span>
+                    )}
+                    {ot.processTime > 0 && (
+                      <span className="px-2 py-1 bg-amber-50 text-amber-500 rounded-lg text-[8px] font-black">
+                        Proceso: {formatDuration(ot.processTime)}
+                      </span>
+                    )}
+                    {ot.totalTime > 0 && (
+                      <span className="px-2 py-1 bg-emerald-50 text-emerald-500 rounded-lg text-[8px] font-black">
+                        Total: {formatDuration(ot.totalTime)}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Collaborators */}
+                  {(ot.collaborators ?? []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {(ot.collaborators ?? []).map(c => (
+                        <span key={c} className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded text-[7px] font-bold">
+                          {c.split(' ').slice(0, 2).join(' ')}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {ordersWithTime.length === 0 && (
+                <div className="text-center py-12">
+                  <Timer className="mx-auto text-slate-200 mb-3" size={40} />
+                  <p className="text-slate-300 text-xs font-bold uppercase">No hay OTs con registros de tiempo</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Profile Login Screen ─── */
 
 function ProfileLogin({ onLogin }: { onLogin: (role: UserRole) => void }) {
@@ -2127,6 +2631,7 @@ export default function LagunaNorteApp() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [isDashOpen, setIsDashOpen] = useState(false);
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     try {
       const saved = localStorage.getItem(USER_ROLE_KEY);
@@ -2137,7 +2642,23 @@ export default function LagunaNorteApp() {
 
   const handleSaveOT = useCallback(async (data: Partial<WorkOrder>) => {
     if (data.id) {
-      await updateWorkOrder(data);
+      // Auto-track timestamps when status changes
+      const existing = workOrders.find(o => o.id === data.id);
+      const now = Date.now();
+      const updateData = { ...data };
+      if (existing) {
+        if (data.status === 'En Proceso' && !existing.startedAt) {
+          updateData.startedAt = now;
+        }
+        if (data.status === 'Terminada' && !existing.completedAt) {
+          updateData.completedAt = now;
+          // Also ensure startedAt is set if it wasn't
+          if (!existing.startedAt) {
+            updateData.startedAt = existing.createdAt;
+          }
+        }
+      }
+      await updateWorkOrder(updateData);
     } else {
       await createWorkOrder(data);
     }
@@ -2258,13 +2779,22 @@ export default function LagunaNorteApp() {
             <span className="hidden sm:inline">{syncing ? 'Sincronizando...' : apiAvailable ? 'En línea' : 'Sin BD'}</span>
           </div>
           {userRole === 'admin' && (
-            <button
-              onClick={() => setIsAdminOpen(true)}
-              className="p-2 bg-slate-100 rounded-full text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-              title="Administración"
-            >
-              <Settings size={16} />
-            </button>
+            <>
+              <button
+                onClick={() => setIsDashOpen(true)}
+                className="p-2 bg-blue-50 rounded-full text-blue-600 hover:bg-blue-100 transition-colors"
+                title="Dashboard"
+              >
+                <BarChart3 size={16} />
+              </button>
+              <button
+                onClick={() => setIsAdminOpen(true)}
+                className="p-2 bg-slate-100 rounded-full text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                title="Administración"
+              >
+                <Settings size={16} />
+              </button>
+            </>
           )}
           <button
             onClick={() => {
@@ -2357,6 +2887,11 @@ export default function LagunaNorteApp() {
                     <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
                     <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
                     <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
+                    {userRole === 'admin' && ot.startedAt && (
+                      <span className="text-[8px] text-amber-400 font-bold flex items-center gap-0.5">
+                        <Timer size={8} /> {formatDuration((ot.completedAt || Date.now()) - ot.startedAt)}
+                      </span>
+                    )}
                   </div>
                   <h4 className="font-black text-slate-800 uppercase truncate text-sm">{(ot.activities ?? []).join(', ')}</h4>
                   <div className="flex items-center gap-3 mt-0.5">
@@ -2418,6 +2953,14 @@ export default function LagunaNorteApp() {
         onUpdateWorkAreas={updateWorkAreas}
         onUpdatePersonnel={updatePersonnel}
         onUpdateZones={updateZones}
+      />
+
+      <AdminDashboard
+        isOpen={isDashOpen}
+        onClose={() => setIsDashOpen(false)}
+        workOrders={workOrders}
+        workAreas={workAreas}
+        personnel={personnel}
       />
     </div>
   );

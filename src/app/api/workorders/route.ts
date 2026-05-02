@@ -12,6 +12,8 @@ function serializeWorkOrder(row: {
   status: string;
   photosBefore: string[];
   photosAfter: string[];
+  startedAt: Date | null;
+  completedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -23,6 +25,8 @@ function serializeWorkOrder(row: {
     zoneName: row.zoneName,
     description: row.description,
     status: row.status,
+    startedAt: row.startedAt ? new Date(row.startedAt).getTime() : null,
+    completedAt: row.completedAt ? new Date(row.completedAt).getTime() : null,
     createdAt: new Date(row.createdAt).getTime(),
     photosBefore: Array.isArray(row.photosBefore) ? row.photosBefore : [],
     photosAfter: Array.isArray(row.photosAfter) ? row.photosAfter : [],
@@ -60,6 +64,9 @@ export async function POST(request: NextRequest) {
     const status = body.status || 'Pendiente';
     const photosBefore = Array.isArray(body.photosBefore) ? body.photosBefore : [];
     const photosAfter = Array.isArray(body.photosAfter) ? body.photosAfter : [];
+    // Auto-set startedAt/completedAt based on initial status
+    const startedAt = status === 'En Proceso' || status === 'Terminada' ? new Date() : null;
+    const completedAt = status === 'Terminada' ? new Date() : null;
 
     const row = await db.workOrder.create({
       data: {
@@ -72,6 +79,8 @@ export async function POST(request: NextRequest) {
         status,
         photosBefore,
         photosAfter,
+        startedAt,
+        completedAt,
       },
     });
 

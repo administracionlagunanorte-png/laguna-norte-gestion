@@ -9,17 +9,19 @@ datasource db {
 }
 
 model WorkOrder {
-  id            String   @id
+  id            String    @id
   otId          String
-  activities    String[] @default([])
-  collaborators String[] @default([])
-  zoneName      String   @default("")
-  description   String   @default("")
-  status        String   @default("Pendiente")
-  photosBefore  String[] @default([])
-  photosAfter   String[] @default([])
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  activities    String[]  @default([])
+  collaborators String[]  @default([])
+  zoneName      String    @default("")
+  description   String    @default("")
+  status        String    @default("Pendiente")
+  photosBefore  String[]  @default([])
+  photosAfter   String[]  @default([])
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([otId])
   @@index([status])
