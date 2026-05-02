@@ -57,3 +57,31 @@ Stage Summary:
 - Only admin can see timestamps and dashboard
 - Dashboard accessible via BarChart3 icon button in header
 - Vercel will auto-deploy from GitHub push
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Add data filters and export functionality to Admin Dashboard
+
+Work Log:
+- Added 5 filter controls to Dashboard: Area, Trabajador, Estado, Fecha Desde, Fecha Hasta
+- Added Filter button (Filter icon) in Dashboard header to toggle filter panel
+- All Dashboard tabs (Resumen, Personal, Areas, Detalle) now respect active filters
+- Added new "Exportar" tab with 5 export options:
+  1. Export CSV (Excel) - All filtered OTs with dates, times, durations
+  2. Export PDF (Reporte) - Formatted landscape report with table, summary, and filter info
+  3. Export Personnel CSV - Per-worker efficiency metrics
+  4. Export Area CSV - Per-area performance metrics
+  5. All exports include BOM for proper Excel UTF-8 handling
+- CSV filenames include filter labels (area name, worker name, status)
+- PDF report includes filter description, summary stats, and full OT table
+- Filter summary shows active filters as tags and count (e.g. "5 de 20 OTs")
+- Clear filters button to reset all
+- Build verified successfully
+- Committed and pushed to GitHub
+
+Stage Summary:
+- Dashboard now has full filter and export capabilities
+- Users can filter by any combination of: area, worker, status, date range
+- 3 CSV export types + 1 PDF export type
+- All exports respect the active filters
