@@ -516,10 +516,12 @@ function MultiSelectCollaborators({
   selected,
   onToggle,
   availableCollaborators,
+  selectedWorkAreaId,
 }: {
   selected: string[];
   onToggle: (name: string) => void;
-  availableCollaborators: { name: string; workAreaName: string }[];
+  availableCollaborators: { name: string; workAreaName: string; workAreaId: string }[];
+  selectedWorkAreaId?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -586,24 +588,34 @@ function MultiSelectCollaborators({
             </div>
           </div>
           <div className="overflow-y-auto max-h-40 no-scrollbar">
-            {filtered.map(c => (
-              <button
-                key={c.name}
-                type="button"
-                onClick={() => onToggle(c.name)}
-                className={`w-full px-4 py-3 text-left text-sm hover:bg-blue-50 transition-colors ${selected.includes(c.name) ? 'bg-blue-50' : ''}`}
-              >
-                <div className="flex items-center gap-2">
-                  <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${selected.includes(c.name) ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>
-                    {selected.includes(c.name) && <span className="text-white text-[8px] font-black">✓</span>}
-                  </div>
-                  <div>
-                    <span className={`block truncate ${selected.includes(c.name) ? 'text-blue-600 font-black' : 'text-slate-700 font-semibold'}`}>{c.name}</span>
-                    <span className="block text-[9px] font-medium text-slate-400 normal-case truncate">{c.workAreaName}</span>
-                  </div>
+            {filtered.map((c, idx) => {
+              // Show a separator label before "other area" personnel
+              const showOtherAreaLabel = selectedWorkAreaId && idx > 0 && c.workAreaId !== selectedWorkAreaId && filtered[idx - 1].workAreaId === selectedWorkAreaId;
+              return (
+                <div key={c.name}>
+                  {showOtherAreaLabel && (
+                    <div className="px-4 py-1 bg-slate-50 border-t border-slate-100">
+                      <span className="text-[8px] font-black text-slate-400 uppercase">Otras áreas</span>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onToggle(c.name)}
+                    className={`w-full px-4 py-3 text-left text-sm hover:bg-blue-50 transition-colors ${selected.includes(c.name) ? 'bg-blue-50' : ''}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${selected.includes(c.name) ? 'bg-blue-600 border-blue-600' : c.workAreaId !== selectedWorkAreaId && selectedWorkAreaId ? 'border-slate-200' : 'border-slate-300'}`}>
+                        {selected.includes(c.name) && <span className="text-white text-[8px] font-black">✓</span>}
+                      </div>
+                      <div>
+                        <span className={`block truncate ${selected.includes(c.name) ? 'text-blue-600 font-black' : c.workAreaId !== selectedWorkAreaId && selectedWorkAreaId ? 'text-slate-500 font-semibold' : 'text-slate-700 font-semibold'}`}>{c.name}</span>
+                        <span className="block text-[9px] font-medium text-slate-400 normal-case truncate">{c.workAreaName}</span>
+                      </div>
+                    </div>
+                  </button>
                 </div>
-              </button>
-            ))}
+              );
+            })}
             {filtered.length === 0 && (
               <p className="px-4 py-3 text-xs text-slate-400 italic">Sin resultados</p>
             )}
@@ -1409,15 +1421,20 @@ function ModalInner({
   // Derived filtered data based on selected work area
   const selectedWorkArea = workAreas.find(wa => wa.id === form.workAreaId);
   const filteredActivities = selectedWorkArea ? selectedWorkArea.activities : [];
+  // Always show ALL personnel so users can freely select from any area
+  // Personnel from the selected work area appear first
+  const allCollaborators = personnel.map(p => ({
+    name: p.name,
+    workAreaName: workAreas.find(wa => wa.id === p.workAreaId)?.name ?? '',
+    workAreaId: p.workAreaId,
+  }));
+  // Sort: personnel from selected work area first, then others
   const filteredCollaborators = form.workAreaId
-    ? personnel.filter(p => p.workAreaId === form.workAreaId).map(p => ({
-        name: p.name,
-        workAreaName: workAreas.find(wa => wa.id === p.workAreaId)?.name ?? '',
-      }))
-    : personnel.map(p => ({
-        name: p.name,
-        workAreaName: workAreas.find(wa => wa.id === p.workAreaId)?.name ?? '',
-      }));
+    ? [
+        ...allCollaborators.filter(c => c.workAreaId === form.workAreaId),
+        ...allCollaborators.filter(c => c.workAreaId !== form.workAreaId),
+      ]
+    : allCollaborators;
 
   const zoneOptions = zones.map(z => ({ value: z.name }));
 
@@ -1449,7 +1466,8 @@ function ModalInner({
     // Filter activities: keep only those in the new work area
     const keptActivities = form.activities.filter(a => wa.activities.includes(a));
 
-    // Auto-select all personnel from the new work area
+    // Auto-select personnel from the new work area (replaces previous selection)
+    // Users can then manually adjust via the collaborator selector
     const areaPersonnel = personnel.filter(p => p.workAreaId === workAreaId).map(p => p.name);
 
     const newDescription = generateDescription(keptActivities, areaPersonnel, wa.name);
@@ -1578,11 +1596,12 @@ function ModalInner({
             availableActivities={filteredActivities}
           />
 
-          {/* 3. Collaborators (filtered by work area) */}
+          {/* 3. Collaborators (all personnel available, area personnel shown first) */}
           <MultiSelectCollaborators
             selected={form.collaborators}
             onToggle={handleToggleCollaborator}
             availableCollaborators={filteredCollaborators}
+            selectedWorkAreaId={form.workAreaId}
           />
 
           {/* 4. Zone */}

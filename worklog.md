@@ -23,3 +23,25 @@ Stage Summary:
 - Personnel correctly split: Chris & Marie → Aseo, Erik & Jeantelus → Recolección
 - CONFIG_VERSION=2 ensures localStorage gets refreshed with new default data
 - Icon rendering uses string lookup (ICON_MAP) instead of direct component references
+---
+Task ID: 1
+Agent: Main Agent
+Task: Deploy Laguna Norte system with fixes for collaborator selection
+
+Work Log:
+- Read entire LagunaNorteApp.tsx (2406 lines) to understand current code
+- Identified that filteredCollaborators only showed personnel from selected work area, preventing free selection
+- Changed filteredCollaborators to show ALL personnel (sorted: selected area first, then others)
+- Added selectedWorkAreaId prop to MultiSelectCollaborators component
+- Added visual separator "Otras áreas" label between area personnel and other personnel
+- Verified Prisma schema and SQLite database are in sync
+- Built project successfully with `npm run build`
+- Verified Next.js dev server is running and serving latest code (200 response)
+- Confirmed Aseo/Brush, Recoleccion, and new collaborator selection code in JS bundle
+
+Stage Summary:
+- Collaborator selection now allows choosing ANY personnel from ANY work area
+- Personnel from selected work area appear first in the list
+- Visual separator "Otras áreas" distinguishes other-area personnel
+- Server running on port 3000, Caddy proxy on port 81
+- Build verified: all features present in JS bundle
