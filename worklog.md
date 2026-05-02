@@ -25,3 +25,35 @@ Stage Summary:
 - The sb_publishable_ key is configured as NEXT_PUBLIC_SUPABASE_ANON_KEY
 - Vercel deployment will auto-rebuild when GitHub push is detected
 - User needs to: 1) Get their Supabase project connection details, 2) Run the migration SQL or setup script, 3) Configure Vercel environment variables
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Add date/time tracking and Admin Dashboard for efficiency control
+
+Work Log:
+- Added `startedAt` and `completedAt` fields to Prisma schema (nullable DateTime)
+- Updated both API routes (POST and PUT) to auto-set startedAt/completedAt on status changes
+- Added formatDateTime() and formatDuration() helper functions
+- Updated WorkOrder interface with startedAt and completedAt fields
+- Updated migrateWorkOrder for backward compatibility
+- Updated createWorkOrder hook to auto-set timestamps based on initial status
+- Updated handleSaveOT to auto-track timestamps when status changes
+- Added Admin Dashboard component (AdminDashboard) with 4 tabs:
+  - Resumen: Key metrics, average times, completion rate, status distribution
+  - Personal: Per-personnel efficiency metrics, time per task, completed/in-process counts
+  - Áreas: Per-area metrics, status distribution, average times
+  - Detalle: Timeline view of each OT with creation/start/completion timestamps
+- Added Dashboard button (BarChart3 icon) in header for admin only
+- Added admin-only timestamp display in OT detail modal
+- Added admin-only timer indicator in OT list cards
+- Updated PDF generation to include Inicio and Término dates
+- Updated Supabase SQL migration with new columns
+- Build verified successfully
+- Committed and pushed to GitHub
+
+Stage Summary:
+- All timestamps are automatically recorded when status changes
+- Only admin can see timestamps and dashboard
+- Dashboard accessible via BarChart3 icon button in header
+- Vercel will auto-deploy from GitHub push
