@@ -10,8 +10,10 @@ function serializeWorkOrder(row: {
   zoneName: string;
   description: string;
   status: string;
+  plannedDate: Date | null;
   photosBefore: string[];
   photosAfter: string[];
+  recurringId: string | null;
   startedAt: Date | null;
   completedAt: Date | null;
   createdAt: Date;
@@ -25,11 +27,13 @@ function serializeWorkOrder(row: {
     zoneName: row.zoneName,
     description: row.description,
     status: row.status,
+    plannedDate: row.plannedDate ? new Date(row.plannedDate).getTime() : null,
     startedAt: row.startedAt ? new Date(row.startedAt).getTime() : null,
     completedAt: row.completedAt ? new Date(row.completedAt).getTime() : null,
     createdAt: new Date(row.createdAt).getTime(),
     photosBefore: Array.isArray(row.photosBefore) ? row.photosBefore : [],
     photosAfter: Array.isArray(row.photosAfter) ? row.photosAfter : [],
+    recurringId: row.recurringId,
   };
 }
 
@@ -67,6 +71,8 @@ export async function POST(request: NextRequest) {
     // Auto-set startedAt/completedAt based on initial status
     const startedAt = status === 'En Proceso' || status === 'Terminada' ? new Date() : null;
     const completedAt = status === 'Terminada' ? new Date() : null;
+    const plannedDate = body.plannedDate ? new Date(body.plannedDate) : null;
+    const recurringId = body.recurringId || null;
 
     const row = await db.workOrder.create({
       data: {
@@ -77,8 +83,10 @@ export async function POST(request: NextRequest) {
         zoneName,
         description,
         status,
+        plannedDate,
         photosBefore,
         photosAfter,
+        recurringId,
         startedAt,
         completedAt,
       },

@@ -86,6 +86,7 @@ export async function POST() {
           zoneName: recurring.zoneName,
           description: recurring.description || `[Auto] ${recurring.name}`,
           status: 'Pendiente',
+          plannedDate: new Date(chileY, chileM, chileD, 12, 0, 0),
           photosBefore: [],
           photosAfter: [],
           recurringId: recurring.id,

@@ -85,3 +85,37 @@ Stage Summary:
 - Users can filter by any combination of: area, worker, status, date range
 - 3 CSV export types + 1 PDF export type
 - All exports respect the active filters
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Add hamburger menu navigation + full-page calendar + step-by-step recurring OT wizard
+
+Work Log:
+- Read full LagunaNorteApp.tsx (4412 lines) to understand current architecture
+- Added AppView type and currentView/menuOpen state for internal navigation
+- Created HamburgerMenu component with left-sliding sidebar navigation
+- Replaced crowded header buttons with single hamburger button (☰)
+- Converted CalendarPanel from side panel to full-page view with:
+  - Bigger day cells (h-16) with OT count per day
+  - Area color badges on projected recurring OTs
+  - Bottom sheet for day detail (mobile-friendly)
+- Redesigned RecurringPanel with 5-step mobile-friendly wizard:
+  - Step 1: Nombre + Área de Trabajo
+  - Step 2: Actividades + Colaboradores
+  - Step 3: Zona + Descripción
+  - Step 4: Frecuencia + Días
+  - Step 5: Resumen + Confirmar
+  - Progress indicator with step numbers and checkmarks
+  - Big touch-friendly Next/Back buttons
+  - Per-step validation (canGoNext)
+- Fixed GitHub remote URL (was juanccalzadilla, correct is administracionlagunanorte-png)
+- Pushed to GitHub using new PAT token
+- Vercel deployment successful (state: success)
+- API health check: database connected, 3 recurring OTs, 5 work orders
+
+Stage Summary:
+- All changes deployed to production
+- App URL: https://laguna-norte-gestion.vercel.app
+- GitHub: https://github.com/administracionlagunanorte-png/laguna-norte-gestion
+- Build compiles successfully

@@ -10,8 +10,10 @@ function serializeWorkOrder(row: {
   zoneName: string;
   description: string;
   status: string;
+  plannedDate: Date | null;
   photosBefore: string[];
   photosAfter: string[];
+  recurringId: string | null;
   startedAt: Date | null;
   completedAt: Date | null;
   createdAt: Date;
@@ -25,11 +27,13 @@ function serializeWorkOrder(row: {
     zoneName: row.zoneName,
     description: row.description,
     status: row.status,
+    plannedDate: row.plannedDate ? new Date(row.plannedDate).getTime() : null,
     startedAt: row.startedAt ? new Date(row.startedAt).getTime() : null,
     completedAt: row.completedAt ? new Date(row.completedAt).getTime() : null,
     createdAt: new Date(row.createdAt).getTime(),
     photosBefore: Array.isArray(row.photosBefore) ? row.photosBefore : [],
     photosAfter: Array.isArray(row.photosAfter) ? row.photosAfter : [],
+    recurringId: row.recurringId,
   };
 }
 
@@ -49,6 +53,7 @@ export async function PUT(
     if (body.collaborators !== undefined) data.collaborators = Array.isArray(body.collaborators) ? body.collaborators : [];
     if (body.zoneName !== undefined) data.zoneName = body.zoneName;
     if (body.description !== undefined) data.description = body.description;
+    if (body.plannedDate !== undefined) data.plannedDate = body.plannedDate ? new Date(body.plannedDate) : null;
     if (body.photosBefore !== undefined) data.photosBefore = Array.isArray(body.photosBefore) ? body.photosBefore : [];
     if (body.photosAfter !== undefined) data.photosAfter = Array.isArray(body.photosAfter) ? body.photosAfter : [];
 

@@ -16,6 +16,7 @@ model WorkOrder {
   zoneName      String    @default("")
   description   String    @default("")
   status        String    @default("Pendiente")
+  plannedDate   DateTime?
   photosBefore  String[]  @default([])
   photosAfter   String[]  @default([])
   recurringId   String?
@@ -28,6 +29,7 @@ model WorkOrder {
   @@index([status])
   @@index([createdAt(sort: Desc)])
   @@index([recurringId])
+  @@index([plannedDate])
 }
 
 model RecurringWorkOrder {

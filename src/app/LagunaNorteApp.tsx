@@ -116,6 +116,7 @@ interface WorkOrder {
   description: string;
   status: string;
   recurringId?: string;
+  plannedDate: number | null;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
@@ -172,6 +173,7 @@ function migrateWorkOrder(ot: any): WorkOrder {
     ...ot,
     collaborators,
     activities,
+    plannedDate: ot.plannedDate ?? null,
     photosBefore: Array.isArray(ot.photosBefore) ? ot.photosBefore : [],
     photosAfter: Array.isArray(ot.photosAfter) ? ot.photosAfter : [],
     startedAt,
@@ -382,6 +384,7 @@ function useWorkOrders() {
       zoneName: data.zoneName ?? '',
       description: data.description ?? '',
       status,
+      plannedDate: data.plannedDate ?? null,
       createdAt: now,
       startedAt: (status === 'En Proceso' || status === 'Terminada') ? (data.startedAt ?? now) : null,
       completedAt: status === 'Terminada' ? (data.completedAt ?? now) : null,
@@ -1546,6 +1549,7 @@ function ModalInner({
       zoneName: editingItem?.zoneName ?? '',
       description: editingItem?.description ?? '',
       status: editingItem?.status ?? 'Pendiente',
+      plannedDate: editingItem?.plannedDate ?? null,
       createdAt: editingItem?.createdAt,
       photosBefore: editingItem?.photosBefore ?? [],
       photosAfter: editingItem?.photosAfter ?? [],
@@ -1752,6 +1756,35 @@ function ModalInner({
             searchable
           />
 
+          {/* 4b. Planned Date */}
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+              <CalendarDays size={10} /> Fecha de Planificación
+            </label>
+            <input
+              type="date"
+              value={form.plannedDate ? new Date(form.plannedDate).toISOString().split('T')[0] : ''}
+              onChange={e => {
+                const val = e.target.value;
+                setForm(prev => ({
+                  ...prev,
+                  plannedDate: val ? new Date(val + 'T12:00:00').getTime() : null,
+                }));
+                setValidationError('');
+              }}
+              className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm"
+            />
+            {form.plannedDate && (
+              <button
+                type="button"
+                onClick={() => setForm(prev => ({ ...prev, plannedDate: null }))}
+                className="mt-1 text-[9px] font-bold text-red-400 uppercase flex items-center gap-1 ml-1"
+              >
+                <X size={9} /> Quitar fecha
+              </button>
+            )}
+          </div>
+
           {/* 5. Observations (auto-generated but editable) */}
           <div>
             <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Observaciones *</label>
@@ -1806,6 +1839,12 @@ function ModalInner({
                 <CalendarDays size={10} /> Registro de Fechas y Horarios
               </p>
               <div className="space-y-1.5">
+                {(editingItem.plannedDate || form.plannedDate) && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-[9px] font-bold text-violet-500 uppercase">Planificada</span>
+                    <span className="text-[10px] font-bold text-slate-600">{formatDate(editingItem.plannedDate ?? form.plannedDate ?? null)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center">
                   <span className="text-[9px] font-bold text-blue-500 uppercase">Creada</span>
                   <span className="text-[10px] font-bold text-slate-600">{formatDateTime(editingItem.createdAt ?? null)}</span>
@@ -3764,7 +3803,8 @@ function getProjectedRecurringForDate(date: Date, items: RecurringWorkOrderItem[
 function groupByDate(orders: WorkOrder[]): Map<string, WorkOrder[]> {
   const map = new Map<string, WorkOrder[]>();
   for (const ot of orders) {
-    const key = toChileDateString(ot.createdAt);
+    // Use plannedDate if set, otherwise fall back to createdAt
+    const key = toChileDateString(ot.plannedDate ?? ot.createdAt);
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(ot);
   }
@@ -4507,7 +4547,13 @@ export default function LagunaNorteApp() {
                     <div className="flex items-center gap-2 mb-0.5">
                       <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
                       <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
-                      <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
+                      {ot.plannedDate ? (
+                        <span className="text-[8px] text-violet-500 font-black flex items-center gap-0.5">
+                          <CalendarDays size={8} /> {formatDate(ot.plannedDate)}
+                        </span>
+                      ) : (
+                        <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
+                      )}
                       {userRole === 'admin' && ot.startedAt && (
                         <span className="text-[8px] text-amber-400 font-bold flex items-center gap-0.5">
                           <Timer size={8} /> {formatDuration((ot.completedAt || Date.now()) - ot.startedAt)}
