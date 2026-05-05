@@ -11,11 +11,17 @@ export async function POST() {
     const todayDayOfWeek = chileNow.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
     const todayDayOfMonth = chileNow.getDate();
 
-    // Start/end of today in Chile timezone (for duplicate check)
-    const chileStartOfDay = new Date(chileNow);
-    chileStartOfDay.setHours(0, 0, 0, 0);
-    const chileEndOfDay = new Date(chileNow);
-    chileEndOfDay.setHours(23, 59, 59, 999);
+    // Build UTC date range for "today in Chile" to check against createdAt (stored in UTC)
+    const chileY = chileNow.getFullYear();
+    const chileM = chileNow.getMonth();
+    const chileD = chileNow.getDate();
+
+    // Chile is UTC-4 (standard) or UTC-3 (DST). We calculate the UTC window:
+    // Approximate: Chile start of day in UTC is roughly 04:00 UTC the same day
+    // Instead of hardcoding offset, we use the difference between now (UTC) and chileNow
+    const utcOffsetMs = now.getTime() - chileNow.getTime();
+    const utcStartOfDay = new Date(Date.UTC(chileY, chileM, chileD, 0, 0, 0, 0) + utcOffsetMs);
+    const utcEndOfDay = new Date(Date.UTC(chileY, chileM, chileD, 23, 59, 59, 999) + utcOffsetMs);
 
     // Get the counter for OT IDs
     const lastOt = await db.workOrder.findFirst({
@@ -43,23 +49,21 @@ export async function POST() {
       if (recurring.frequency === 'daily') {
         shouldGenerate = true;
       } else if (recurring.frequency === 'weekly') {
-        // Check if today's day of week is in the daysOfWeek array
         const daysOfWeek = Array.isArray(recurring.daysOfWeek) ? recurring.daysOfWeek : [];
         shouldGenerate = daysOfWeek.includes(todayDayOfWeek);
       } else if (recurring.frequency === 'monthly') {
-        // Check if today matches dayOfMonth
         shouldGenerate = recurring.dayOfMonth === todayDayOfMonth;
       }
 
       if (!shouldGenerate) continue;
 
-      // Check for duplicate: already have a WorkOrder with this recurringId created today
+      // Check for duplicate: already have a WorkOrder with this recurringId created today (Chile time)
       const existing = await db.workOrder.findFirst({
         where: {
           recurringId: recurring.id,
           createdAt: {
-            gte: chileStartOfDay,
-            lte: chileEndOfDay,
+            gte: utcStartOfDay,
+            lte: utcEndOfDay,
           },
         },
       });
