@@ -7,7 +7,7 @@ import {
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
-  Repeat, Pause, Play
+  Repeat, Pause, Play, ChevronLeft
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -3617,6 +3617,328 @@ function RecurringPanel({
   );
 }
 
+/* ─── Calendar Panel ─── */
+
+function toChileDateString(ts: number): string {
+  return new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+}
+
+function getProjectedRecurringForDate(date: Date, items: RecurringWorkOrderItem[]): RecurringWorkOrderItem[] {
+  const dayOfWeek = date.getDay(); // 0=Sun
+  const dayOfMonth = date.getDate();
+  return items.filter(item => {
+    if (item.status !== 'active') return false;
+    if (item.frequency === 'daily') return true;
+    if (item.frequency === 'weekly') return item.daysOfWeek.includes(dayOfWeek);
+    if (item.frequency === 'monthly') return item.dayOfMonth === dayOfMonth;
+    return false;
+  });
+}
+
+function groupByDate(orders: WorkOrder[]): Map<string, WorkOrder[]> {
+  const map = new Map<string, WorkOrder[]>();
+  for (const ot of orders) {
+    const key = toChileDateString(ot.createdAt);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(ot);
+  }
+  return map;
+}
+
+const CHILE_MONTHS = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
+const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+function CalendarPanel({
+  isOpen,
+  onClose,
+  workOrders,
+  recurringItems,
+  workAreas,
+  userRole,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  workOrders: WorkOrder[];
+  recurringItems: RecurringWorkOrderItem[];
+  workAreas: WorkArea[];
+  userRole: UserRole;
+}) {
+  const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
+  const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  if (!isOpen) return null;
+
+  // Chile today
+  const chileToday = toChileDateString(Date.now());
+
+  // Group work orders by date
+  const ordersByDate = groupByDate(workOrders);
+
+  // Build calendar grid data
+  const firstDay = new Date(viewYear, viewMonth, 1);
+  const lastDay = new Date(viewYear, viewMonth + 1, 0);
+  const startDow = (firstDay.getDay() + 6) % 7; // Monday=0
+  const totalDays = lastDay.getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= totalDays; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
+    else setViewMonth(m => m - 1);
+    setSelectedDate(null);
+  };
+
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
+    else setViewMonth(m => m + 1);
+    setSelectedDate(null);
+  };
+
+  const goToToday = () => {
+    const now = new Date();
+    setViewYear(now.getFullYear());
+    setViewMonth(now.getMonth());
+    setSelectedDate(null);
+  };
+
+  // Get selected day detail
+  const selectedOrders: WorkOrder[] = selectedDate ? (ordersByDate.get(selectedDate) ?? []) : [];
+  let selectedRecurring: RecurringWorkOrderItem[] = [];
+  if (selectedDate) {
+    const parts = selectedDate.split('-');
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    selectedRecurring = getProjectedRecurringForDate(d, recurringItems);
+  }
+
+  const getWorkAreaName = (waId: string) => workAreas.find(w => w.id === waId)?.name ?? waId;
+  const getWorkAreaColor = (waId: string) => workAreas.find(w => w.id === waId)?.color ?? 'bg-slate-400';
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex justify-end">
+      <div className="bg-white w-full max-w-md h-full overflow-y-auto shadow-2xl no-scrollbar flex flex-col">
+        {/* Header */}
+        <div className="sticky top-0 z-10 bg-white border-b border-slate-100 p-4 flex justify-between items-center">
+          <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
+            <CalendarDays size={18} /> Calendario
+          </h2>
+          <button onClick={onClose} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors"><X size={20} /></button>
+        </div>
+
+        <div className="flex-1 p-4 space-y-4">
+          {/* Month Navigation */}
+          <div className="flex items-center justify-between bg-slate-50 rounded-2xl p-3">
+            <button onClick={prevMonth} className="p-2 rounded-xl hover:bg-white transition-colors">
+              <ChevronLeft size={18} className="text-slate-600" />
+            </button>
+            <button onClick={goToToday} className="text-center">
+              <p className="text-sm font-black text-slate-800 uppercase tracking-tighter">
+                {CHILE_MONTHS[viewMonth]} {viewYear}
+              </p>
+              <p className="text-[8px] font-bold text-violet-500 uppercase">Hoy</p>
+            </button>
+            <button onClick={nextMonth} className="p-2 rounded-xl hover:bg-white transition-colors">
+              <ChevronRight size={18} className="text-slate-600" />
+            </button>
+          </div>
+
+          {/* Weekday Headers */}
+          <div className="grid grid-cols-7 gap-1">
+            {WEEKDAY_LABELS.map(label => (
+              <div key={label} className="text-center text-[9px] font-black text-slate-400 uppercase py-1">
+                {label}
+              </div>
+            ))}
+          </div>
+
+          {/* Day Grid */}
+          <div className="grid grid-cols-7 gap-1">
+            {cells.map((day, idx) => {
+              if (day === null) {
+                return <div key={`empty-${idx}`} className="h-12" />;
+              }
+
+              const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+              const isToday = dateStr === chileToday;
+              const isSelected = dateStr === selectedDate;
+              const dayOrders = ordersByDate.get(dateStr) ?? [];
+              const dayDate = new Date(viewYear, viewMonth, day);
+              const dayRecurring = getProjectedRecurringForDate(dayDate, recurringItems);
+              const hasProjected = dayRecurring.length > 0;
+
+              const hasPendiente = dayOrders.some(o => o.status === 'Pendiente');
+              const hasEnProceso = dayOrders.some(o => o.status === 'En Proceso');
+              const hasTerminada = dayOrders.some(o => o.status === 'Terminada');
+
+              return (
+                <button
+                  key={dateStr}
+                  onClick={() => setSelectedDate(dateStr)}
+                  className={`
+                    h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all relative
+                    ${isSelected ? 'bg-blue-50 ring-2 ring-blue-500' : isToday ? 'bg-slate-100' : 'hover:bg-slate-50'}
+                  `}
+                >
+                  <span className={`
+                    text-xs leading-none
+                    ${isSelected ? 'font-black text-blue-600' : isToday ? 'font-black text-slate-800' : 'font-semibold text-slate-600'}
+                    ${hasProjected && !isSelected ? 'ring-2 ring-blue-300 rounded-full w-5 h-5 flex items-center justify-center' : ''}
+                  `}>
+                    {day}
+                  </span>
+                  {/* Status dots */}
+                  {(hasPendiente || hasEnProceso || hasTerminada) && (
+                    <div className="flex items-center gap-0.5">
+                      {hasPendiente && <span className="w-1.5 h-1.5 rounded-full bg-red-500" />}
+                      {hasEnProceso && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
+                      {hasTerminada && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+                    </div>
+                  )}
+                  {!hasPendiente && !hasEnProceso && !hasTerminada && hasProjected && (
+                    <div className="flex items-center gap-0.5">
+                      <span className="w-1.5 h-1.5 rounded-full border border-blue-400" />
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Legend */}
+          <div className="bg-slate-50 rounded-2xl p-3">
+            <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Leyenda</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              <span className="flex items-center gap-1.5 text-[9px] font-bold text-slate-600">
+                <span className="w-2 h-2 rounded-full bg-red-500" /> Pendiente
+              </span>
+              <span className="flex items-center gap-1.5 text-[9px] font-bold text-slate-600">
+                <span className="w-2 h-2 rounded-full bg-amber-500" /> En Proceso
+              </span>
+              <span className="flex items-center gap-1.5 text-[9px] font-bold text-slate-600">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" /> Terminada
+              </span>
+              <span className="flex items-center gap-1.5 text-[9px] font-bold text-slate-600">
+                <span className="w-2 h-2 rounded-full border-2 border-blue-400" /> Proyectada
+              </span>
+            </div>
+          </div>
+
+          {/* Day Detail Panel */}
+          {selectedDate && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-tighter">
+                  {(() => {
+                    const parts = selectedDate.split('-');
+                    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+                    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+                    return `${dayNames[d.getDay()]} ${d.getDate()}`;
+                  })()}
+                </h3>
+                <span className="text-[9px] font-black text-slate-400 uppercase">{selectedDate}</span>
+              </div>
+
+              {/* Actual Work Orders */}
+              {selectedOrders.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[9px] font-black text-slate-400 uppercase">Órdenes de Trabajo</p>
+                  {selectedOrders.map(ot => (
+                    <div key={ot.id} className="bg-slate-50 rounded-2xl p-3 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-slate-800">{ot.otId}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${STATUS_CONFIG[ot.status]?.color ?? 'bg-slate-400'}`}>
+                          {ot.status}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {ot.activities.slice(0, 3).map(a => (
+                          <span key={a} className="text-[8px] font-bold text-slate-500 bg-white px-1.5 py-0.5 rounded-md">{a}</span>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1 text-[9px] text-slate-400">
+                          <MapPin size={9} /> {ot.zoneName || '—'}
+                        </span>
+                        {ot.recurringId && (() => {
+                          const wa = workAreas.find(w => {
+                            const rec = recurringItems.find(r => r.id === ot.recurringId);
+                            return rec ? w.id === rec.workAreaId : false;
+                          });
+                          return wa ? (
+                            <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black text-white ${wa.color}`}>
+                              {wa.name}
+                            </span>
+                          ) : null;
+                        })()}
+                        {!ot.recurringId && (() => {
+                          // Try to find work area from activities match
+                          const wa = workAreas.find(w => w.activities.some(a => ot.activities.includes(a)));
+                          return wa ? (
+                            <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black text-white ${wa.color}`}>
+                              {wa.name}
+                            </span>
+                          ) : null;
+                        })()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Projected Recurring OTs */}
+              {selectedRecurring.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[9px] font-black text-blue-400 uppercase flex items-center gap-1">
+                    <Repeat size={9} /> OTs Proyectadas (Recurrentes)
+                  </p>
+                  {selectedRecurring.map(item => (
+                    <div key={item.id} className="bg-blue-50 border border-blue-100 rounded-2xl p-3 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-slate-800">{item.name}</span>
+                        <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-blue-100 text-blue-600">
+                          proyectada
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {item.activities.slice(0, 3).map(a => (
+                          <span key={a} className="text-[8px] font-bold text-blue-500 bg-white px-1.5 py-0.5 rounded-md">{a}</span>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1 text-[9px] text-slate-400">
+                          <MapPin size={9} /> {item.zoneName || '—'}
+                        </span>
+                        <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black text-white ${getWorkAreaColor(item.workAreaId)}`}>
+                          {getWorkAreaName(item.workAreaId)}
+                        </span>
+                      </div>
+                      <div className="text-[8px] text-blue-400 font-medium">
+                        {item.frequency === 'daily' ? 'Diaria' : item.frequency === 'weekly' ? 'Semanal' : 'Mensual'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {selectedOrders.length === 0 && selectedRecurring.length === 0 && (
+                <div className="bg-slate-50 rounded-2xl p-6 text-center">
+                  <p className="text-xs font-bold text-slate-400">Sin OTs para este día</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Profile Login Screen ─── */
 
 function ProfileLogin({ onLogin }: { onLogin: (role: UserRole) => void }) {
@@ -3721,6 +4043,8 @@ export default function LagunaNorteApp() {
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isDashOpen, setIsDashOpen] = useState(false);
   const [isRecurringOpen, setIsRecurringOpen] = useState(false);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const { items: recurringItems } = useRecurringWorkOrders();
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     try {
       const saved = localStorage.getItem(USER_ROLE_KEY);
@@ -3867,6 +4191,13 @@ export default function LagunaNorteApp() {
             <RefreshCw size={10} className={syncing ? 'animate-spin' : ''} />
             <span className="hidden sm:inline">{syncing ? 'Sincronizando...' : apiAvailable ? 'En línea' : 'Sin BD'}</span>
           </div>
+          <button
+            onClick={() => setIsCalendarOpen(true)}
+            className="p-2 bg-violet-50 rounded-full text-violet-600 hover:bg-violet-100 transition-colors"
+            title="Calendario"
+          >
+            <CalendarDays size={16} />
+          </button>
           {userRole === 'admin' && (
             <>
               <button
@@ -4065,6 +4396,15 @@ export default function LagunaNorteApp() {
         workAreas={workAreas}
         personnel={personnel}
         zones={zones}
+      />
+
+      <CalendarPanel
+        isOpen={isCalendarOpen}
+        onClose={() => setIsCalendarOpen(false)}
+        workOrders={workOrders}
+        recurringItems={recurringItems}
+        workAreas={workAreas}
+        userRole={userRole!}
       />
     </div>
   );
