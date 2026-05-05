@@ -6,7 +6,8 @@ import {
   MapPin, ChevronRight, X, Plus, ClipboardList,
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye,
-  BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter
+  BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
+  Repeat, Pause, Play
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -114,11 +115,29 @@ interface WorkOrder {
   zoneName: string;
   description: string;
   status: string;
+  recurringId?: string;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
   photosBefore: string[];
   photosAfter: string[];
+}
+
+interface RecurringWorkOrderItem {
+  id: string;
+  name: string;
+  activities: string[];
+  collaborators: string[];
+  zoneName: string;
+  workAreaId: string;
+  description: string;
+  frequency: string;
+  daysOfWeek: number[];
+  dayOfMonth: number | null;
+  status: string;
+  lastGeneratedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /* ─── Migration helper (backward compat) ─── */
@@ -464,6 +483,85 @@ function useWorkOrders() {
     updateWorkOrder,
     deleteWorkOrder,
   };
+}
+
+/* ─── Custom Hook: useRecurringWorkOrders ─── */
+
+function useRecurringWorkOrders() {
+  const [items, setItems] = useState<RecurringWorkOrderItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchItems = useCallback(async () => {
+    try {
+      const res = await fetch('/api/recurring');
+      if (!res.ok) throw new Error('API not available');
+      const data = await res.json();
+      setItems(Array.isArray(data) ? data : []);
+    } catch {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchItems();
+  }, [fetchItems]);
+
+  const createItem = useCallback(async (data: Partial<RecurringWorkOrderItem>): Promise<RecurringWorkOrderItem | null> => {
+    try {
+      const res = await fetch('/api/recurring', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        await fetchItems();
+        return created;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [fetchItems]);
+
+  const updateItem = useCallback(async (id: string, data: Partial<RecurringWorkOrderItem>): Promise<RecurringWorkOrderItem | null> => {
+    try {
+      const res = await fetch(`/api/recurring/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        await fetchItems();
+        return updated;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [fetchItems]);
+
+  const deleteItem = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/recurring/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchItems();
+        return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  }, [fetchItems]);
+
+  const generateToday = useCallback(async (): Promise<{ created: number; skipped: number; message: string } | null> => {
+    try {
+      const res = await fetch('/api/recurring/generate', { method: 'POST' });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, []);
+
+  return { items, loading, createItem, updateItem, deleteItem, generateToday, refetch: fetchItems };
 }
 
 /* ─── Custom Hook: useConfigData ─── */
@@ -2989,6 +3087,536 @@ function AdminDashboard({
   );
 }
 
+/* ─── Recurring Work Orders Panel ─── */
+
+const DAY_LABELS: { day: number; label: string }[] = [
+  { day: 1, label: 'Lun' },
+  { day: 2, label: 'Mar' },
+  { day: 3, label: 'Mié' },
+  { day: 4, label: 'Jue' },
+  { day: 5, label: 'Vie' },
+  { day: 6, label: 'Sáb' },
+  { day: 0, label: 'Dom' },
+];
+
+const FREQUENCY_OPTIONS = [
+  { value: 'weekly', label: 'Semanal' },
+  { value: 'daily', label: 'Diaria' },
+  { value: 'monthly', label: 'Mensual' },
+];
+
+function RecurringPanel({
+  isOpen,
+  onClose,
+  workAreas,
+  personnel,
+  zones,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  workAreas: WorkArea[];
+  personnel: Personnel[];
+  zones: Zone[];
+}) {
+  const { items, loading, createItem, updateItem, deleteItem, generateToday, refetch } = useRecurringWorkOrders();
+  const [editingItem, setEditingItem] = useState<RecurringWorkOrderItem | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [toastMsg, setToastMsg] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('success');
+
+  // Form state
+  const [formName, setFormName] = useState('');
+  const [formWorkAreaId, setFormWorkAreaId] = useState('');
+  const [formActivities, setFormActivities] = useState<string[]>([]);
+  const [formCollaborators, setFormCollaborators] = useState<string[]>([]);
+  const [formZoneName, setFormZoneName] = useState('');
+  const [formDescription, setFormDescription] = useState('');
+  const [formFrequency, setFormFrequency] = useState('weekly');
+  const [formDaysOfWeek, setFormDaysOfWeek] = useState<number[]>([]);
+  const [formDayOfMonth, setFormDayOfMonth] = useState<number>(1);
+
+  if (!isOpen) return null;
+
+  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    setToastMsg(msg);
+    setToastType(type);
+    setTimeout(() => setToastMsg(''), 4000);
+  };
+
+  const resetForm = () => {
+    setFormName('');
+    setFormWorkAreaId('');
+    setFormActivities([]);
+    setFormCollaborators([]);
+    setFormZoneName('');
+    setFormDescription('');
+    setFormFrequency('weekly');
+    setFormDaysOfWeek([]);
+    setFormDayOfMonth(1);
+    setEditingItem(null);
+    setIsCreating(false);
+  };
+
+  const startEdit = (item: RecurringWorkOrderItem) => {
+    setEditingItem(item);
+    setIsCreating(true);
+    setFormName(item.name);
+    setFormWorkAreaId(item.workAreaId);
+    setFormActivities([...item.activities]);
+    setFormCollaborators([...item.collaborators]);
+    setFormZoneName(item.zoneName);
+    setFormDescription(item.description);
+    setFormFrequency(item.frequency);
+    setFormDaysOfWeek([...item.daysOfWeek]);
+    setFormDayOfMonth(item.dayOfMonth ?? 1);
+  };
+
+  const startCreate = () => {
+    resetForm();
+    setIsCreating(true);
+  };
+
+  const handleSave = async () => {
+    if (!formName.trim()) { showToast('Ingresa un nombre', 'error'); return; }
+    if (!formWorkAreaId) { showToast('Selecciona un área de trabajo', 'error'); return; }
+    if (formFrequency === 'weekly' && formDaysOfWeek.length === 0) { showToast('Selecciona al menos un día', 'error'); return; }
+    if (formFrequency === 'monthly' && (formDayOfMonth < 1 || formDayOfMonth > 31)) { showToast('Día del mes debe ser 1-31', 'error'); return; }
+
+    const data: Partial<RecurringWorkOrderItem> = {
+      name: formName.trim(),
+      workAreaId: formWorkAreaId,
+      activities: formActivities,
+      collaborators: formCollaborators,
+      zoneName: formZoneName,
+      description: formDescription,
+      frequency: formFrequency,
+      daysOfWeek: formFrequency === 'weekly' ? formDaysOfWeek : [],
+      dayOfMonth: formFrequency === 'monthly' ? formDayOfMonth : null,
+    };
+
+    if (editingItem) {
+      const result = await updateItem(editingItem.id, data);
+      if (result) {
+        showToast('OT Repetitiva actualizada');
+      } else {
+        showToast('Error al actualizar', 'error');
+      }
+    } else {
+      const result = await createItem(data);
+      if (result) {
+        showToast('OT Repetitiva creada');
+      } else {
+        showToast('Error al crear', 'error');
+      }
+    }
+    resetForm();
+  };
+
+  const handleTogglePause = async (item: RecurringWorkOrderItem) => {
+    const newStatus = item.status === 'active' ? 'paused' : 'active';
+    const result = await updateItem(item.id, { status: newStatus });
+    if (result) {
+      showToast(newStatus === 'active' ? 'OT Repetitiva reanudada' : 'OT Repetitiva pausada');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    const ok = await deleteItem(id);
+    if (ok) {
+      showToast('OT Repetitiva eliminada');
+    } else {
+      showToast('Error al eliminar', 'error');
+    }
+  };
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    const result = await generateToday();
+    setGenerating(false);
+    if (result) {
+      showToast(result.message);
+    } else {
+      showToast('Error al generar OTs', 'error');
+    }
+  };
+
+  const toggleDay = (day: number) => {
+    setFormDaysOfWeek(prev =>
+      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+    );
+  };
+
+  const toggleActivity = (act: string) => {
+    setFormActivities(prev =>
+      prev.includes(act) ? prev.filter(a => a !== act) : [...prev, act]
+    );
+  };
+
+  const toggleCollaborator = (name: string) => {
+    setFormCollaborators(prev =>
+      prev.includes(name) ? prev.filter(c => c !== name) : [...prev, name]
+    );
+  };
+
+  // Filtered data for form
+  const selectedWorkArea = workAreas.find(wa => wa.id === formWorkAreaId);
+  const availableActivities = selectedWorkArea ? selectedWorkArea.activities : [];
+  const availableCollaborators = personnel.map(p => ({
+    name: p.name,
+    workAreaName: workAreas.find(wa => wa.id === p.workAreaId)?.name ?? 'Sin área',
+    workAreaId: p.workAreaId,
+  }));
+
+  const getWorkAreaName = (id: string) => workAreas.find(wa => wa.id === id)?.name ?? 'Sin área';
+  const getWorkAreaColor = (id: string) => workAreas.find(wa => wa.id === id)?.color ?? 'bg-gray-500';
+
+  const renderSchedule = (item: RecurringWorkOrderItem) => {
+    if (item.frequency === 'daily') {
+      return <span className="text-[9px] font-black text-slate-500 uppercase">Todos los días</span>;
+    }
+    if (item.frequency === 'weekly') {
+      return (
+        <div className="flex gap-1 flex-wrap">
+          {DAY_LABELS.filter(d => item.daysOfWeek.includes(d.day)).map(d => (
+            <span key={d.day} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[8px] font-black">{d.label}</span>
+          ))}
+        </div>
+      );
+    }
+    if (item.frequency === 'monthly') {
+      return <span className="text-[9px] font-black text-slate-500 uppercase">Día {item.dayOfMonth} del mes</span>;
+    }
+    return null;
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex justify-end">
+      <div className="bg-white w-full max-w-md h-full overflow-y-auto shadow-2xl no-scrollbar">
+        {/* Header */}
+        <div className="sticky top-0 z-10 bg-white border-b border-slate-100 p-4 flex justify-between items-center">
+          <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
+            <Repeat size={18} /> OTs Repetitivas
+          </h2>
+          <button onClick={onClose} className="p-2 bg-slate-100 rounded-full"><X size={20} /></button>
+        </div>
+
+        {/* Toast */}
+        {toastMsg && (
+          <div className={`mx-4 mt-3 p-3 rounded-2xl text-center text-xs font-black uppercase ${
+            toastType === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+          }`}>
+            {toastMsg}
+          </div>
+        )}
+
+        {/* Generate Today Button */}
+        <div className="p-4 pb-0">
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="w-full py-3 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 active:scale-95 transition-transform disabled:opacity-50 shadow-lg shadow-blue-200"
+          >
+            {generating ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <CalendarDays size={16} />
+            )}
+            {generating ? 'Generando...' : 'Generar OTs Hoy'}
+          </button>
+        </div>
+
+        {/* Create New Button */}
+        {!isCreating && (
+          <div className="p-4 pb-0">
+            <button
+              onClick={startCreate}
+              className="w-full py-3 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 active:scale-95 transition-transform"
+            >
+              <Plus size={16} /> Nueva OT Repetitiva
+            </button>
+          </div>
+        )}
+
+        {/* Create/Edit Form */}
+        {isCreating && (
+          <div className="p-4 space-y-4 bg-slate-50 border-b border-slate-100">
+            <div className="flex items-center justify-between">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                {editingItem ? 'Editar OT Repetitiva' : 'Nueva OT Repetitiva'}
+              </p>
+              <button onClick={resetForm} className="p-1.5 bg-slate-200 rounded-lg text-slate-500 hover:text-red-500 transition-colors">
+                <X size={14} />
+              </button>
+            </div>
+
+            {/* Name */}
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Nombre</label>
+              <input
+                type="text"
+                value={formName}
+                onChange={e => setFormName(e.target.value)}
+                placeholder="Ej: Recolección Lun-Mié-Vie"
+                className="w-full p-3 mt-1 rounded-xl bg-white border border-slate-200 font-bold text-sm"
+              />
+            </div>
+
+            {/* Work Area */}
+            <Dropdown
+              label="Área de Trabajo"
+              icon={Tag}
+              options={workAreas.map(wa => ({ value: wa.name, subtitle: `${wa.activities.length} actividades`, colorDot: wa.color }))}
+              selected={selectedWorkArea?.name ?? ''}
+              onSelect={val => {
+                const wa = workAreas.find(w => w.name === val);
+                setFormWorkAreaId(wa?.id ?? '');
+                setFormActivities([]);
+                setFormCollaborators([]);
+              }}
+              placeholder="Seleccionar área..."
+              searchable
+            />
+
+            {/* Activities */}
+            {formWorkAreaId && availableActivities.length > 0 && (
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+                  <Tag size={10} /> Actividades
+                </label>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {availableActivities.map(act => {
+                    const isSelected = formActivities.includes(act);
+                    return (
+                      <button
+                        key={act}
+                        type="button"
+                        onClick={() => toggleActivity(act)}
+                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
+                          isSelected
+                            ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                            : 'bg-white text-slate-400 border border-slate-100'
+                        }`}
+                      >
+                        {act}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Collaborators */}
+            {formWorkAreaId && (
+              <MultiSelectCollaborators
+                selected={formCollaborators}
+                onToggle={toggleCollaborator}
+                availableCollaborators={availableCollaborators}
+                selectedWorkAreaId={formWorkAreaId}
+              />
+            )}
+
+            {/* Zone */}
+            <Dropdown
+              label="Zona"
+              icon={MapPin}
+              options={zones.map(z => ({ value: z.name }))}
+              selected={formZoneName}
+              onSelect={setFormZoneName}
+              placeholder="Seleccionar zona..."
+              searchable
+            />
+
+            {/* Description */}
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Descripción</label>
+              <textarea
+                value={formDescription}
+                onChange={e => setFormDescription(e.target.value)}
+                placeholder="Descripción de la OT..."
+                rows={2}
+                className="w-full p-3 mt-1 rounded-xl bg-white border border-slate-200 font-bold text-sm resize-none"
+              />
+            </div>
+
+            {/* Frequency */}
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Frecuencia</label>
+              <div className="flex gap-2 mt-2">
+                {FREQUENCY_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setFormFrequency(opt.value)}
+                    className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
+                      formFrequency === opt.value
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                        : 'bg-white text-slate-400 border border-slate-100'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Day selector for weekly */}
+            {formFrequency === 'weekly' && (
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Días de la semana</label>
+                <div className="flex gap-1.5 mt-2">
+                  {DAY_LABELS.map(d => {
+                    const isSelected = formDaysOfWeek.includes(d.day);
+                    return (
+                      <button
+                        key={d.day}
+                        type="button"
+                        onClick={() => toggleDay(d.day)}
+                        className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all ${
+                          isSelected
+                            ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                            : 'bg-white text-slate-300 border border-slate-100'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Day of month for monthly */}
+            {formFrequency === 'monthly' && (
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Día del mes</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={formDayOfMonth}
+                  onChange={e => setFormDayOfMonth(parseInt(e.target.value) || 1)}
+                  className="w-full p-3 mt-1 rounded-xl bg-white border border-slate-200 font-bold text-sm"
+                />
+              </div>
+            )}
+
+            {/* Save / Cancel */}
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={handleSave}
+                className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase active:scale-95 transition-transform"
+              >
+                {editingItem ? 'Guardar Cambios' : 'Crear OT Repetitiva'}
+              </button>
+              <button
+                onClick={resetForm}
+                className="px-4 py-3 bg-slate-200 text-slate-600 rounded-xl font-black text-[10px] uppercase"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* List */}
+        <div className="p-4 space-y-3">
+          {loading ? (
+            <div className="text-center py-8">
+              <div className="w-6 h-6 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+              <p className="text-slate-400 text-xs font-bold">Cargando...</p>
+            </div>
+          ) : items.length === 0 ? (
+            <div className="text-center py-12">
+              <Repeat className="mx-auto text-slate-200 mb-3" size={40} />
+              <p className="text-slate-300 text-xs font-bold uppercase">No hay OTs repetitivas</p>
+              <p className="text-slate-200 text-[9px] font-medium mt-1">Crea una para automatizar la generación de OTs</p>
+            </div>
+          ) : (
+            items.map(item => (
+              <div key={item.id} className="bg-slate-50 rounded-2xl p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex-1 min-w-0 pr-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${
+                        item.status === 'active' ? 'bg-emerald-500' : 'bg-amber-500'
+                      }`}>
+                        {item.status === 'active' ? 'Activa' : 'Pausada'}
+                      </span>
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${getWorkAreaColor(item.workAreaId)}`}>
+                        {getWorkAreaName(item.workAreaId)}
+                      </span>
+                    </div>
+                    <h4 className="font-black text-slate-800 uppercase text-sm truncate">{item.name}</h4>
+                    {renderSchedule(item)}
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => startEdit(item)}
+                      className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"
+                      title="Editar"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      onClick={() => handleTogglePause(item)}
+                      className="p-1.5 text-slate-400 hover:text-amber-600 transition-colors"
+                      title={item.status === 'active' ? 'Pausar' : 'Reanudar'}
+                    >
+                      {item.status === 'active' ? <Pause size={14} /> : <Play size={14} />}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(item.id)}
+                      className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"
+                      title="Eliminar"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Activities */}
+                {item.activities.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {item.activities.map(act => (
+                      <span key={act} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[8px] font-black uppercase">{act}</span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Collaborators */}
+                {item.collaborators.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {item.collaborators.map(c => (
+                      <span key={c} className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded text-[8px] font-black">
+                        {c.split(' ').slice(0, 2).join(' ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Zone + Last Generated */}
+                <div className="flex items-center gap-3 mt-2">
+                  {item.zoneName && (
+                    <span className="text-[9px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                      <MapPin size={9} className="text-blue-500" /> {item.zoneName}
+                    </span>
+                  )}
+                  {item.lastGeneratedAt && (
+                    <span className="text-[9px] text-slate-300 font-medium">
+                      Última: {formatDate(item.lastGeneratedAt)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Profile Login Screen ─── */
 
 function ProfileLogin({ onLogin }: { onLogin: (role: UserRole) => void }) {
@@ -3092,6 +3720,7 @@ export default function LagunaNorteApp() {
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isDashOpen, setIsDashOpen] = useState(false);
+  const [isRecurringOpen, setIsRecurringOpen] = useState(false);
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     try {
       const saved = localStorage.getItem(USER_ROLE_KEY);
@@ -3240,6 +3869,13 @@ export default function LagunaNorteApp() {
           </div>
           {userRole === 'admin' && (
             <>
+              <button
+                onClick={() => setIsRecurringOpen(true)}
+                className="p-2 bg-emerald-50 rounded-full text-emerald-600 hover:bg-emerald-100 transition-colors"
+                title="OTs Repetitivas"
+              >
+                <Repeat size={16} />
+              </button>
               <button
                 onClick={() => setIsDashOpen(true)}
                 className="p-2 bg-blue-50 rounded-full text-blue-600 hover:bg-blue-100 transition-colors"
@@ -3421,6 +4057,14 @@ export default function LagunaNorteApp() {
         workOrders={workOrders}
         workAreas={workAreas}
         personnel={personnel}
+      />
+
+      <RecurringPanel
+        isOpen={isRecurringOpen}
+        onClose={() => setIsRecurringOpen(false)}
+        workAreas={workAreas}
+        personnel={personnel}
+        zones={zones}
       />
     </div>
   );

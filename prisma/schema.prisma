@@ -18,6 +18,7 @@ model WorkOrder {
   status        String    @default("Pendiente")
   photosBefore  String[]  @default([])
   photosAfter   String[]  @default([])
+  recurringId   String?
   startedAt     DateTime?
   completedAt   DateTime?
   createdAt     DateTime  @default(now())
@@ -26,4 +27,25 @@ model WorkOrder {
   @@index([otId])
   @@index([status])
   @@index([createdAt(sort: Desc)])
+  @@index([recurringId])
+}
+
+model RecurringWorkOrder {
+  id              String     @id @default(cuid())
+  name            String
+  activities      String[]   @default([])
+  collaborators   String[]   @default([])
+  zoneName        String     @default("")
+  workAreaId      String
+  description     String     @default("")
+  frequency       String     @default("weekly")
+  daysOfWeek      Int[]      @default([])
+  dayOfMonth      Int?
+  status          String     @default("active")
+  lastGeneratedAt DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([status])
+  @@index([frequency])
 }
