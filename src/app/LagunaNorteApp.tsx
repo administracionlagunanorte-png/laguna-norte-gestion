@@ -7,7 +7,7 @@ import {
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
-  Repeat, Pause, Play, ChevronLeft
+  Repeat, Pause, Play, ChevronLeft, Menu
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -3106,14 +3106,12 @@ const FREQUENCY_OPTIONS = [
 ];
 
 function RecurringPanel({
-  isOpen,
-  onClose,
+  onBack,
   workAreas,
   personnel,
   zones,
 }: {
-  isOpen: boolean;
-  onClose: () => void;
+  onBack: () => void;
   workAreas: WorkArea[];
   personnel: Personnel[];
   zones: Zone[];
@@ -3124,6 +3122,7 @@ function RecurringPanel({
   const [generating, setGenerating] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
+  const [wizardStep, setWizardStep] = useState(1);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -3135,8 +3134,6 @@ function RecurringPanel({
   const [formFrequency, setFormFrequency] = useState('weekly');
   const [formDaysOfWeek, setFormDaysOfWeek] = useState<number[]>([]);
   const [formDayOfMonth, setFormDayOfMonth] = useState<number>(1);
-
-  if (!isOpen) return null;
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToastMsg(msg);
@@ -3156,11 +3153,13 @@ function RecurringPanel({
     setFormDayOfMonth(1);
     setEditingItem(null);
     setIsCreating(false);
+    setWizardStep(1);
   };
 
   const startEdit = (item: RecurringWorkOrderItem) => {
     setEditingItem(item);
     setIsCreating(true);
+    setWizardStep(1);
     setFormName(item.name);
     setFormWorkAreaId(item.workAreaId);
     setFormActivities([...item.activities]);
@@ -3290,15 +3289,35 @@ function RecurringPanel({
     return null;
   };
 
+  const WIZARD_STEPS = [
+    { num: 1, label: 'Nombre' },
+    { num: 2, label: 'Actividades' },
+    { num: 3, label: 'Zona' },
+    { num: 4, label: 'Frecuencia' },
+    { num: 5, label: 'Confirmar' },
+  ];
+
+  const canGoNext = () => {
+    if (wizardStep === 1) return formName.trim() !== '' && formWorkAreaId !== '';
+    if (wizardStep === 2) return true;
+    if (wizardStep === 3) return true;
+    if (wizardStep === 4) {
+      if (formFrequency === 'weekly') return formDaysOfWeek.length > 0;
+      return true;
+    }
+    return true;
+  };
+
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex justify-end">
-      <div className="bg-white w-full max-w-md h-full overflow-y-auto shadow-2xl no-scrollbar">
+    <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-white border-b border-slate-100 p-4 flex justify-between items-center">
+        <div className="bg-white border-b border-slate-100 p-4 flex items-center gap-3">
+          <button onClick={onBack} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+            <ChevronLeft size={18} className="text-slate-600" />
+          </button>
           <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
             <Repeat size={18} /> OTs Repetitivas
           </h2>
-          <button onClick={onClose} className="p-2 bg-slate-100 rounded-full"><X size={20} /></button>
         </div>
 
         {/* Toast */}
@@ -3310,309 +3329,416 @@ function RecurringPanel({
           </div>
         )}
 
-        {/* Generate Today Button */}
-        <div className="p-4 pb-0">
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className="w-full py-3 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 active:scale-95 transition-transform disabled:opacity-50 shadow-lg shadow-blue-200"
-          >
-            {generating ? (
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <CalendarDays size={16} />
-            )}
-            {generating ? 'Generando...' : 'Generar OTs Hoy'}
-          </button>
-        </div>
-
-        {/* Create New Button */}
-        {!isCreating && (
-          <div className="p-4 pb-0">
-            <button
-              onClick={startCreate}
-              className="w-full py-3 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 active:scale-95 transition-transform"
-            >
-              <Plus size={16} /> Nueva OT Repetitiva
-            </button>
-          </div>
-        )}
-
-        {/* Create/Edit Form */}
-        {isCreating && (
-          <div className="p-4 space-y-4 bg-slate-50 border-b border-slate-100">
-            <div className="flex items-center justify-between">
-              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                {editingItem ? 'Editar OT Repetitiva' : 'Nueva OT Repetitiva'}
-              </p>
-              <button onClick={resetForm} className="p-1.5 bg-slate-200 rounded-lg text-slate-500 hover:text-red-500 transition-colors">
-                <X size={14} />
+        <div className="flex-1 overflow-y-auto no-scrollbar">
+          {/* Generate Today Button */}
+          {!isCreating && (
+            <div className="p-4 pb-0">
+              <button
+                onClick={handleGenerate}
+                disabled={generating}
+                className="w-full py-3 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 active:scale-95 transition-transform disabled:opacity-50 shadow-lg shadow-blue-200"
+              >
+                {generating ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <CalendarDays size={16} />
+                )}
+                {generating ? 'Generando...' : 'Generar OTs Hoy'}
               </button>
             </div>
+          )}
 
-            {/* Name */}
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Nombre</label>
-              <input
-                type="text"
-                value={formName}
-                onChange={e => setFormName(e.target.value)}
-                placeholder="Ej: Recolección Lun-Mié-Vie"
-                className="w-full p-3 mt-1 rounded-xl bg-white border border-slate-200 font-bold text-sm"
-              />
+          {/* Create New Button */}
+          {!isCreating && (
+            <div className="p-4 pb-0">
+              <button
+                onClick={startCreate}
+                className="w-full py-3 bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 active:scale-95 transition-transform"
+              >
+                <Plus size={16} /> Nueva OT Repetitiva
+              </button>
             </div>
+          )}
 
-            {/* Work Area */}
-            <Dropdown
-              label="Área de Trabajo"
-              icon={Tag}
-              options={workAreas.map(wa => ({ value: wa.name, subtitle: `${wa.activities.length} actividades`, colorDot: wa.color }))}
-              selected={selectedWorkArea?.name ?? ''}
-              onSelect={val => {
-                const wa = workAreas.find(w => w.name === val);
-                setFormWorkAreaId(wa?.id ?? '');
-                setFormActivities([]);
-                setFormCollaborators([]);
-              }}
-              placeholder="Seleccionar área..."
-              searchable
-            />
-
-            {/* Activities */}
-            {formWorkAreaId && availableActivities.length > 0 && (
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
-                  <Tag size={10} /> Actividades
-                </label>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {availableActivities.map(act => {
-                    const isSelected = formActivities.includes(act);
-                    return (
-                      <button
-                        key={act}
-                        type="button"
-                        onClick={() => toggleActivity(act)}
-                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
-                          isSelected
-                            ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
-                            : 'bg-white text-slate-400 border border-slate-100'
-                        }`}
-                      >
-                        {act}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Collaborators */}
-            {formWorkAreaId && (
-              <MultiSelectCollaborators
-                selected={formCollaborators}
-                onToggle={toggleCollaborator}
-                availableCollaborators={availableCollaborators}
-                selectedWorkAreaId={formWorkAreaId}
-              />
-            )}
-
-            {/* Zone */}
-            <Dropdown
-              label="Zona"
-              icon={MapPin}
-              options={zones.map(z => ({ value: z.name }))}
-              selected={formZoneName}
-              onSelect={setFormZoneName}
-              placeholder="Seleccionar zona..."
-              searchable
-            />
-
-            {/* Description */}
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Descripción</label>
-              <textarea
-                value={formDescription}
-                onChange={e => setFormDescription(e.target.value)}
-                placeholder="Descripción de la OT..."
-                rows={2}
-                className="w-full p-3 mt-1 rounded-xl bg-white border border-slate-200 font-bold text-sm resize-none"
-              />
-            </div>
-
-            {/* Frequency */}
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Frecuencia</label>
-              <div className="flex gap-2 mt-2">
-                {FREQUENCY_OPTIONS.map(opt => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setFormFrequency(opt.value)}
-                    className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
-                      formFrequency === opt.value
+          {/* ─── Step-by-Step Wizard ─── */}
+          {isCreating && (
+            <div className="p-4 space-y-4">
+              {/* Progress Indicator */}
+              <div className="flex items-center justify-between">
+                {WIZARD_STEPS.map((step, idx) => (
+                  <div key={step.num} className="flex items-center">
+                    <div className={`flex items-center justify-center w-8 h-8 rounded-full text-[10px] font-black transition-all ${
+                      wizardStep === step.num
                         ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
-                        : 'bg-white text-slate-400 border border-slate-100'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
+                        : wizardStep > step.num
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-slate-100 text-slate-400'
+                    }`}>
+                      {wizardStep > step.num ? '✓' : step.num}
+                    </div>
+                    {idx < WIZARD_STEPS.length - 1 && (
+                      <div className={`w-4 h-0.5 mx-0.5 ${wizardStep > step.num ? 'bg-emerald-400' : 'bg-slate-200'}`} />
+                    )}
+                  </div>
                 ))}
               </div>
-            </div>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">
+                Paso {wizardStep} de 5 — {WIZARD_STEPS[wizardStep - 1].label}
+              </p>
 
-            {/* Day selector for weekly */}
-            {formFrequency === 'weekly' && (
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Días de la semana</label>
-                <div className="flex gap-1.5 mt-2">
-                  {DAY_LABELS.map(d => {
-                    const isSelected = formDaysOfWeek.includes(d.day);
-                    return (
-                      <button
-                        key={d.day}
-                        type="button"
-                        onClick={() => toggleDay(d.day)}
-                        className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all ${
-                          isSelected
-                            ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
-                            : 'bg-white text-slate-300 border border-slate-100'
-                        }`}
-                      >
-                        {d.label}
-                      </button>
-                    );
-                  })}
+              {/* Step 1: Nombre + Área de Trabajo */}
+              {wizardStep === 1 && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-black text-slate-400 uppercase ml-1">Nombre *</label>
+                    <input
+                      type="text"
+                      value={formName}
+                      onChange={e => setFormName(e.target.value)}
+                      placeholder="Ej: Recolección Lun-Mié-Vie"
+                      className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm"
+                    />
+                  </div>
+                  <Dropdown
+                    label="Área de Trabajo *"
+                    icon={Tag}
+                    options={workAreas.map(wa => ({ value: wa.name, subtitle: `${wa.activities.length} actividades`, colorDot: wa.color }))}
+                    selected={selectedWorkArea?.name ?? ''}
+                    onSelect={val => {
+                      const wa = workAreas.find(w => w.name === val);
+                      setFormWorkAreaId(wa?.id ?? '');
+                      setFormActivities([]);
+                      setFormCollaborators([]);
+                    }}
+                    placeholder="Seleccionar área..."
+                    searchable
+                  />
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Day of month for monthly */}
-            {formFrequency === 'monthly' && (
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Día del mes</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={formDayOfMonth}
-                  onChange={e => setFormDayOfMonth(parseInt(e.target.value) || 1)}
-                  className="w-full p-3 mt-1 rounded-xl bg-white border border-slate-200 font-bold text-sm"
-                />
-              </div>
-            )}
+              {/* Step 2: Actividades + Colaboradores */}
+              {wizardStep === 2 && (
+                <div className="space-y-4">
+                  {formWorkAreaId && availableActivities.length > 0 && (
+                    <div>
+                      <label className="text-xs font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+                        <Tag size={10} /> Actividades
+                      </label>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {availableActivities.map(act => {
+                          const isSelected = formActivities.includes(act);
+                          return (
+                            <button
+                              key={act}
+                              type="button"
+                              onClick={() => toggleActivity(act)}
+                              className={`px-4 py-3 rounded-2xl text-xs font-black uppercase transition-all active:scale-95 ${
+                                isSelected
+                                  ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                                  : 'bg-slate-50 text-slate-400 border border-slate-100'
+                              }`}
+                            >
+                              {act}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {formWorkAreaId && (
+                    <MultiSelectCollaborators
+                      selected={formCollaborators}
+                      onToggle={toggleCollaborator}
+                      availableCollaborators={availableCollaborators}
+                      selectedWorkAreaId={formWorkAreaId}
+                    />
+                  )}
+                </div>
+              )}
 
-            {/* Save / Cancel */}
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={handleSave}
-                className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase active:scale-95 transition-transform"
-              >
-                {editingItem ? 'Guardar Cambios' : 'Crear OT Repetitiva'}
-              </button>
+              {/* Step 3: Zona + Descripción */}
+              {wizardStep === 3 && (
+                <div className="space-y-4">
+                  <Dropdown
+                    label="Zona"
+                    icon={MapPin}
+                    options={zones.map(z => ({ value: z.name }))}
+                    selected={formZoneName}
+                    onSelect={setFormZoneName}
+                    placeholder="Seleccionar zona..."
+                    searchable
+                  />
+                  <div>
+                    <label className="text-xs font-black text-slate-400 uppercase ml-1">Descripción</label>
+                    <textarea
+                      value={formDescription}
+                      onChange={e => setFormDescription(e.target.value)}
+                      placeholder="Descripción de la OT..."
+                      rows={3}
+                      className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm resize-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Step 4: Frecuencia + Días */}
+              {wizardStep === 4 && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-black text-slate-400 uppercase ml-1">Frecuencia</label>
+                    <div className="flex gap-2 mt-2">
+                      {FREQUENCY_OPTIONS.map(opt => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setFormFrequency(opt.value)}
+                          className={`flex-1 py-3 rounded-2xl text-xs font-black uppercase transition-all active:scale-95 ${
+                            formFrequency === opt.value
+                              ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                              : 'bg-slate-50 text-slate-400 border border-slate-100'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {formFrequency === 'weekly' && (
+                    <div>
+                      <label className="text-xs font-black text-slate-400 uppercase ml-1">Días de la semana *</label>
+                      <div className="flex gap-1.5 mt-2">
+                        {DAY_LABELS.map(d => {
+                          const isSelected = formDaysOfWeek.includes(d.day);
+                          return (
+                            <button
+                              key={d.day}
+                              type="button"
+                              onClick={() => toggleDay(d.day)}
+                              className={`flex-1 py-3 rounded-2xl text-xs font-black uppercase transition-all active:scale-95 ${
+                                isSelected
+                                  ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                                  : 'bg-slate-50 text-slate-300 border border-slate-100'
+                              }`}
+                            >
+                              {d.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {formFrequency === 'monthly' && (
+                    <div>
+                      <label className="text-xs font-black text-slate-400 uppercase ml-1">Día del mes</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={31}
+                        value={formDayOfMonth}
+                        onChange={e => setFormDayOfMonth(parseInt(e.target.value) || 1)}
+                        className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 5: Resumen + Confirmar */}
+              {wizardStep === 5 && (
+                <div className="space-y-3">
+                  <div className="bg-slate-50 rounded-2xl p-4 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-slate-400 uppercase">Nombre</span>
+                      <span className="text-sm font-black text-slate-800">{formName || '—'}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-slate-400 uppercase">Área</span>
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase text-white ${getWorkAreaColor(formWorkAreaId)}`}>
+                        {getWorkAreaName(formWorkAreaId)}
+                      </span>
+                    </div>
+                    {formActivities.length > 0 && (
+                      <div>
+                        <span className="text-xs font-bold text-slate-400 uppercase block mb-1">Actividades</span>
+                        <div className="flex flex-wrap gap-1">
+                          {formActivities.map(a => (
+                            <span key={a} className="px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[9px] font-black">{a}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {formCollaborators.length > 0 && (
+                      <div>
+                        <span className="text-xs font-bold text-slate-400 uppercase block mb-1">Colaboradores</span>
+                        <div className="flex flex-wrap gap-1">
+                          {formCollaborators.map(c => (
+                            <span key={c} className="px-2 py-1 bg-purple-50 text-purple-600 rounded-lg text-[9px] font-black">
+                              {c.split(' ').slice(0, 2).join(' ')}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-slate-400 uppercase">Zona</span>
+                      <span className="text-sm font-black text-slate-800">{formZoneName || '—'}</span>
+                    </div>
+                    {formDescription && (
+                      <div>
+                        <span className="text-xs font-bold text-slate-400 uppercase block mb-1">Descripción</span>
+                        <p className="text-xs text-slate-600 font-medium">{formDescription}</p>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-slate-400 uppercase">Frecuencia</span>
+                      <span className="text-sm font-black text-slate-800">
+                        {FREQUENCY_OPTIONS.find(f => f.value === formFrequency)?.label ?? '—'}
+                        {formFrequency === 'weekly' && formDaysOfWeek.length > 0 && (
+                          <span className="ml-1 text-[9px] font-bold text-blue-500">
+                            ({DAY_LABELS.filter(d => formDaysOfWeek.includes(d.day)).map(d => d.label).join(', ')})
+                          </span>
+                        )}
+                        {formFrequency === 'monthly' && ` (Día ${formDayOfMonth})`}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Wizard Navigation Buttons */}
+              <div className="flex gap-2 pt-2 pb-4">
+                {wizardStep > 1 && (
+                  <button
+                    onClick={() => setWizardStep(s => s - 1)}
+                    className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black text-sm uppercase active:scale-95 transition-transform flex items-center justify-center gap-2"
+                  >
+                    <ChevronLeft size={16} /> Atrás
+                  </button>
+                )}
+                {wizardStep < 5 ? (
+                  <button
+                    onClick={() => canGoNext() && setWizardStep(s => s + 1)}
+                    disabled={!canGoNext()}
+                    className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black text-sm uppercase active:scale-95 transition-transform disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    Siguiente <ChevronRight size={16} />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSave}
+                    className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-black text-sm uppercase active:scale-95 transition-transform shadow-lg shadow-emerald-200 flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 size={18} /> {editingItem ? 'Guardar' : 'Crear'}
+                  </button>
+                )}
+              </div>
+
+              {/* Cancel link */}
               <button
                 onClick={resetForm}
-                className="px-4 py-3 bg-slate-200 text-slate-600 rounded-xl font-black text-[10px] uppercase"
+                className="w-full py-2 text-slate-400 font-bold text-xs uppercase text-center hover:text-red-500 transition-colors"
               >
                 Cancelar
               </button>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* List */}
-        <div className="p-4 space-y-3">
-          {loading ? (
-            <div className="text-center py-8">
-              <div className="w-6 h-6 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-              <p className="text-slate-400 text-xs font-bold">Cargando...</p>
-            </div>
-          ) : items.length === 0 ? (
-            <div className="text-center py-12">
-              <Repeat className="mx-auto text-slate-200 mb-3" size={40} />
-              <p className="text-slate-300 text-xs font-bold uppercase">No hay OTs repetitivas</p>
-              <p className="text-slate-200 text-[9px] font-medium mt-1">Crea una para automatizar la generación de OTs</p>
-            </div>
-          ) : (
-            items.map(item => (
-              <div key={item.id} className="bg-slate-50 rounded-2xl p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex-1 min-w-0 pr-2">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${
-                        item.status === 'active' ? 'bg-emerald-500' : 'bg-amber-500'
-                      }`}>
-                        {item.status === 'active' ? 'Activa' : 'Pausada'}
-                      </span>
-                      <span className={`inline-block px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${getWorkAreaColor(item.workAreaId)}`}>
-                        {getWorkAreaName(item.workAreaId)}
-                      </span>
+          {/* ─── List of Existing Recurring OTs ─── */}
+          {!isCreating && (
+            <div className="p-4 space-y-3">
+              {loading ? (
+                <div className="text-center py-8">
+                  <div className="w-6 h-6 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                  <p className="text-slate-400 text-xs font-bold">Cargando...</p>
+                </div>
+              ) : items.length === 0 ? (
+                <div className="text-center py-12">
+                  <Repeat className="mx-auto text-slate-200 mb-3" size={40} />
+                  <p className="text-slate-300 text-xs font-bold uppercase">No hay OTs repetitivas</p>
+                  <p className="text-slate-200 text-[9px] font-medium mt-1">Crea una para automatizar la generación de OTs</p>
+                </div>
+              ) : (
+                items.map(item => (
+                  <div key={item.id} className="bg-slate-50 rounded-2xl p-4">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1 min-w-0 pr-2">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${
+                            item.status === 'active' ? 'bg-emerald-500' : 'bg-amber-500'
+                          }`}>
+                            {item.status === 'active' ? 'Activa' : 'Pausada'}
+                          </span>
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${getWorkAreaColor(item.workAreaId)}`}>
+                            {getWorkAreaName(item.workAreaId)}
+                          </span>
+                        </div>
+                        <h4 className="font-black text-slate-800 uppercase text-sm truncate">{item.name}</h4>
+                        {renderSchedule(item)}
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => startEdit(item)}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"
+                          title="Editar"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleTogglePause(item)}
+                          className="p-1.5 text-slate-400 hover:text-amber-600 transition-colors"
+                          title={item.status === 'active' ? 'Pausar' : 'Reanudar'}
+                        >
+                          {item.status === 'active' ? <Pause size={14} /> : <Play size={14} />}
+                        </button>
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"
+                          title="Eliminar"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
-                    <h4 className="font-black text-slate-800 uppercase text-sm truncate">{item.name}</h4>
-                    {renderSchedule(item)}
-                  </div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    <button
-                      onClick={() => startEdit(item)}
-                      className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"
-                      title="Editar"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleTogglePause(item)}
-                      className="p-1.5 text-slate-400 hover:text-amber-600 transition-colors"
-                      title={item.status === 'active' ? 'Pausar' : 'Reanudar'}
-                    >
-                      {item.status === 'active' ? <Pause size={14} /> : <Play size={14} />}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"
-                      title="Eliminar"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
 
-                {/* Activities */}
-                {item.activities.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {item.activities.map(act => (
-                      <span key={act} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[8px] font-black uppercase">{act}</span>
-                    ))}
-                  </div>
-                )}
+                    {/* Activities */}
+                    {item.activities.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {item.activities.map(act => (
+                          <span key={act} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[8px] font-black uppercase">{act}</span>
+                        ))}
+                      </div>
+                    )}
 
-                {/* Collaborators */}
-                {item.collaborators.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1.5">
-                    {item.collaborators.map(c => (
-                      <span key={c} className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded text-[8px] font-black">
-                        {c.split(' ').slice(0, 2).join(' ')}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                    {/* Collaborators */}
+                    {item.collaborators.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {item.collaborators.map(c => (
+                          <span key={c} className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded text-[8px] font-black">
+                            {c.split(' ').slice(0, 2).join(' ')}
+                          </span>
+                        ))}
+                      </div>
+                    )}
 
-                {/* Zone + Last Generated */}
-                <div className="flex items-center gap-3 mt-2">
-                  {item.zoneName && (
-                    <span className="text-[9px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                      <MapPin size={9} className="text-blue-500" /> {item.zoneName}
-                    </span>
-                  )}
-                  {item.lastGeneratedAt && (
-                    <span className="text-[9px] text-slate-300 font-medium">
-                      Última: {formatDate(item.lastGeneratedAt)}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))
+                    {/* Zone + Last Generated */}
+                    <div className="flex items-center gap-3 mt-2">
+                      {item.zoneName && (
+                        <span className="text-[9px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                          <MapPin size={9} className="text-blue-500" /> {item.zoneName}
+                        </span>
+                      )}
+                      {item.lastGeneratedAt && (
+                        <span className="text-[9px] text-slate-300 font-medium">
+                          Última: {formatDate(item.lastGeneratedAt)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           )}
         </div>
-      </div>
     </div>
   );
 }
@@ -3653,15 +3779,13 @@ const CHILE_MONTHS = [
 const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
 
 function CalendarPanel({
-  isOpen,
-  onClose,
+  onBack,
   workOrders,
   recurringItems,
   workAreas,
   userRole,
 }: {
-  isOpen: boolean;
-  onClose: () => void;
+  onBack: () => void;
   workOrders: WorkOrder[];
   recurringItems: RecurringWorkOrderItem[];
   workAreas: WorkArea[];
@@ -3670,8 +3794,6 @@ function CalendarPanel({
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-
-  if (!isOpen) return null;
 
   // Chile today
   const chileToday = toChileDateString(Date.now());
@@ -3721,17 +3843,18 @@ function CalendarPanel({
   const getWorkAreaColor = (waId: string) => workAreas.find(w => w.id === waId)?.color ?? 'bg-slate-400';
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex justify-end">
-      <div className="bg-white w-full max-w-md h-full overflow-y-auto shadow-2xl no-scrollbar flex flex-col">
+    <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-white border-b border-slate-100 p-4 flex justify-between items-center">
+        <div className="bg-white border-b border-slate-100 p-4 flex items-center gap-3">
+          <button onClick={onBack} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+            <ChevronLeft size={18} className="text-slate-600" />
+          </button>
           <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
             <CalendarDays size={18} /> Calendario
           </h2>
-          <button onClick={onClose} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors"><X size={20} /></button>
         </div>
 
-        <div className="flex-1 p-4 space-y-4">
+        <div className="flex-1 p-4 space-y-4 overflow-y-auto no-scrollbar pb-32">
           {/* Month Navigation */}
           <div className="flex items-center justify-between bg-slate-50 rounded-2xl p-3">
             <button onClick={prevMonth} className="p-2 rounded-xl hover:bg-white transition-colors">
@@ -3776,12 +3899,15 @@ function CalendarPanel({
               const hasEnProceso = dayOrders.some(o => o.status === 'En Proceso');
               const hasTerminada = dayOrders.some(o => o.status === 'Terminada');
 
+              const totalDayOTs = dayOrders.length + dayRecurring.length;
+              const uniqueWorkAreas = [...new Set(dayRecurring.map(r => r.workAreaId))];
+
               return (
                 <button
                   key={dateStr}
                   onClick={() => setSelectedDate(dateStr)}
                   className={`
-                    h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all relative
+                    h-16 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all relative
                     ${isSelected ? 'bg-blue-50 ring-2 ring-blue-500' : isToday ? 'bg-slate-100' : 'hover:bg-slate-50'}
                   `}
                 >
@@ -3792,6 +3918,10 @@ function CalendarPanel({
                   `}>
                     {day}
                   </span>
+                  {/* OT count */}
+                  {totalDayOTs > 0 && (
+                    <span className="text-[7px] font-black text-slate-400">{totalDayOTs} OT{totalDayOTs > 1 ? 's' : ''}</span>
+                  )}
                   {/* Status dots */}
                   {(hasPendiente || hasEnProceso || hasTerminada) && (
                     <div className="flex items-center gap-0.5">
@@ -3800,9 +3930,12 @@ function CalendarPanel({
                       {hasTerminada && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
                     </div>
                   )}
+                  {/* Area color badges for projected recurring */}
                   {!hasPendiente && !hasEnProceso && !hasTerminada && hasProjected && (
                     <div className="flex items-center gap-0.5">
-                      <span className="w-1.5 h-1.5 rounded-full border border-blue-400" />
+                      {uniqueWorkAreas.slice(0, 3).map(waId => (
+                        <span key={waId} className={`w-1.5 h-1.5 rounded-full ${getWorkAreaColor(waId)}`} />
+                      ))}
                     </div>
                   )}
                 </button>
@@ -3829,113 +3962,213 @@ function CalendarPanel({
             </div>
           </div>
 
-          {/* Day Detail Panel */}
+          {/* Day Detail Bottom Sheet */}
           {selectedDate && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-tighter">
-                  {(() => {
-                    const parts = selectedDate.split('-');
-                    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-                    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-                    return `${dayNames[d.getDay()]} ${d.getDate()}`;
-                  })()}
-                </h3>
-                <span className="text-[9px] font-black text-slate-400 uppercase">{selectedDate}</span>
+            <div className="fixed bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl max-h-[60vh] overflow-y-auto z-50 border-t border-slate-200 no-scrollbar">
+              {/* Drag handle */}
+              <div className="flex justify-center pt-2 pb-1 sticky top-0 bg-white z-10">
+                <button onClick={() => setSelectedDate(null)} className="w-10 h-1 bg-slate-200 rounded-full" />
               </div>
-
-              {/* Actual Work Orders */}
-              {selectedOrders.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[9px] font-black text-slate-400 uppercase">Órdenes de Trabajo</p>
-                  {selectedOrders.map(ot => (
-                    <div key={ot.id} className="bg-slate-50 rounded-2xl p-3 space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-slate-800">{ot.otId}</span>
-                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${STATUS_CONFIG[ot.status]?.color ?? 'bg-slate-400'}`}>
-                          {ot.status}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {ot.activities.slice(0, 3).map(a => (
-                          <span key={a} className="text-[8px] font-bold text-slate-500 bg-white px-1.5 py-0.5 rounded-md">{a}</span>
-                        ))}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="flex items-center gap-1 text-[9px] text-slate-400">
-                          <MapPin size={9} /> {ot.zoneName || '—'}
-                        </span>
-                        {ot.recurringId && (() => {
-                          const wa = workAreas.find(w => {
-                            const rec = recurringItems.find(r => r.id === ot.recurringId);
-                            return rec ? w.id === rec.workAreaId : false;
-                          });
-                          return wa ? (
-                            <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black text-white ${wa.color}`}>
-                              {wa.name}
-                            </span>
-                          ) : null;
-                        })()}
-                        {!ot.recurringId && (() => {
-                          // Try to find work area from activities match
-                          const wa = workAreas.find(w => w.activities.some(a => ot.activities.includes(a)));
-                          return wa ? (
-                            <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black text-white ${wa.color}`}>
-                              {wa.name}
-                            </span>
-                          ) : null;
-                        })()}
-                      </div>
-                    </div>
-                  ))}
+              <div className="px-4 pb-6 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-tighter">
+                    {(() => {
+                      const parts = selectedDate.split('-');
+                      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+                      const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+                      return `${dayNames[d.getDay()]} ${d.getDate()}`;
+                    })()}
+                  </h3>
+                  <span className="text-[9px] font-black text-slate-400 uppercase">{selectedDate}</span>
                 </div>
-              )}
 
-              {/* Projected Recurring OTs */}
-              {selectedRecurring.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[9px] font-black text-blue-400 uppercase flex items-center gap-1">
-                    <Repeat size={9} /> OTs Proyectadas (Recurrentes)
-                  </p>
-                  {selectedRecurring.map(item => (
-                    <div key={item.id} className="bg-blue-50 border border-blue-100 rounded-2xl p-3 space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-slate-800">{item.name}</span>
-                        <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-blue-100 text-blue-600">
-                          proyectada
-                        </span>
+                {/* Actual Work Orders */}
+                {selectedOrders.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[9px] font-black text-slate-400 uppercase">Órdenes de Trabajo</p>
+                    {selectedOrders.map(ot => (
+                      <div key={ot.id} className="bg-slate-50 rounded-2xl p-3 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black text-slate-800">{ot.otId}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${STATUS_CONFIG[ot.status]?.color ?? 'bg-slate-400'}`}>
+                            {ot.status}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {ot.activities.slice(0, 3).map(a => (
+                            <span key={a} className="text-[8px] font-bold text-slate-500 bg-white px-1.5 py-0.5 rounded-md">{a}</span>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center gap-1 text-[9px] text-slate-400">
+                            <MapPin size={9} /> {ot.zoneName || '—'}
+                          </span>
+                          {ot.recurringId && (() => {
+                            const wa = workAreas.find(w => {
+                              const rec = recurringItems.find(r => r.id === ot.recurringId);
+                              return rec ? w.id === rec.workAreaId : false;
+                            });
+                            return wa ? (
+                              <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black text-white ${wa.color}`}>
+                                {wa.name}
+                              </span>
+                            ) : null;
+                          })()}
+                          {!ot.recurringId && (() => {
+                            const wa = workAreas.find(w => w.activities.some(a => ot.activities.includes(a)));
+                            return wa ? (
+                              <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black text-white ${wa.color}`}>
+                                {wa.name}
+                              </span>
+                            ) : null;
+                          })()}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-1">
-                        {item.activities.slice(0, 3).map(a => (
-                          <span key={a} className="text-[8px] font-bold text-blue-500 bg-white px-1.5 py-0.5 rounded-md">{a}</span>
-                        ))}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="flex items-center gap-1 text-[9px] text-slate-400">
-                          <MapPin size={9} /> {item.zoneName || '—'}
-                        </span>
-                        <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black text-white ${getWorkAreaColor(item.workAreaId)}`}>
-                          {getWorkAreaName(item.workAreaId)}
-                        </span>
-                      </div>
-                      <div className="text-[8px] text-blue-400 font-medium">
-                        {item.frequency === 'daily' ? 'Diaria' : item.frequency === 'weekly' ? 'Semanal' : 'Mensual'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
 
-              {selectedOrders.length === 0 && selectedRecurring.length === 0 && (
-                <div className="bg-slate-50 rounded-2xl p-6 text-center">
-                  <p className="text-xs font-bold text-slate-400">Sin OTs para este día</p>
-                </div>
-              )}
+                {/* Projected Recurring OTs */}
+                {selectedRecurring.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[9px] font-black text-blue-400 uppercase flex items-center gap-1">
+                      <Repeat size={9} /> OTs Proyectadas (Recurrentes)
+                    </p>
+                    {selectedRecurring.map(item => (
+                      <div key={item.id} className="bg-blue-50 border border-blue-100 rounded-2xl p-3 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black text-slate-800">{item.name}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-blue-100 text-blue-600">
+                            proyectada
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {item.activities.slice(0, 3).map(a => (
+                            <span key={a} className="text-[8px] font-bold text-blue-500 bg-white px-1.5 py-0.5 rounded-md">{a}</span>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center gap-1 text-[9px] text-slate-400">
+                            <MapPin size={9} /> {item.zoneName || '—'}
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black text-white ${getWorkAreaColor(item.workAreaId)}`}>
+                            {getWorkAreaName(item.workAreaId)}
+                          </span>
+                        </div>
+                        <div className="text-[8px] text-blue-400 font-medium">
+                          {item.frequency === 'daily' ? 'Diaria' : item.frequency === 'weekly' ? 'Semanal' : 'Mensual'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {selectedOrders.length === 0 && selectedRecurring.length === 0 && (
+                  <div className="bg-slate-50 rounded-2xl p-6 text-center">
+                    <p className="text-xs font-bold text-slate-400">Sin OTs para este día</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
+          {/* Backdrop for bottom sheet */}
+          {selectedDate && (
+            <div className="fixed inset-0 z-40 bg-slate-900/30" onClick={() => setSelectedDate(null)} />
+          )}
+        </div>
+    </div>
+  );
+}
+
+/* ─── View Type ─── */
+
+type AppView = 'main' | 'calendar' | 'recurring' | 'dashboard' | 'admin';
+
+/* ─── Hamburger Menu ─── */
+
+function HamburgerMenu({
+  isOpen,
+  onClose,
+  currentView,
+  onNavigate,
+  userRole,
+  onLogout,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  currentView: AppView;
+  onNavigate: (view: AppView) => void;
+  userRole: UserRole;
+  onLogout: () => void;
+}) {
+  if (!isOpen) return null;
+
+  const menuItems: { view: AppView; label: string; emoji: string; adminOnly?: boolean }[] = [
+    { view: 'main', label: 'Órdenes de Trabajo', emoji: '📋' },
+    { view: 'calendar', label: 'Calendario', emoji: '📅' },
+    { view: 'recurring', label: 'OTs Repetitivas', emoji: '🔄', adminOnly: true },
+    { view: 'dashboard', label: 'Dashboard', emoji: '📊', adminOnly: true },
+    { view: 'admin', label: 'Administración', emoji: '⚙️', adminOnly: true },
+  ];
+
+  const handleNavigate = (view: AppView) => {
+    onNavigate(view);
+    onClose();
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 z-[70] bg-slate-900/50 backdrop-blur-sm transition-opacity" onClick={onClose} />
+      {/* Sidebar */}
+      <div className="fixed inset-y-0 left-0 z-[80] w-72 bg-white shadow-2xl flex flex-col">
+        {/* Logo Header */}
+        <div className="p-4 bg-gradient-to-br from-slate-800 to-slate-900 flex items-center gap-3">
+          <img src="/logo-laguna.jpg" alt="Laguna Norte" className="h-10 rounded-lg" />
+          <div>
+            <h2 className="text-sm font-black text-white uppercase tracking-tighter">Laguna Norte</h2>
+            <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest">Condominio & Parque</p>
+          </div>
+        </div>
+
+        {/* Role Badge */}
+        <div className="px-4 py-3 border-b border-slate-100">
+          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[9px] font-black uppercase ${userRole === 'admin' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
+            {userRole === 'admin' ? <Shield size={12} /> : <Eye size={12} />}
+            {userRole === 'admin' ? 'Administrador' : 'Usuario'}
+          </div>
+        </div>
+
+        {/* Menu Items */}
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto no-scrollbar">
+          {menuItems.filter(item => !item.adminOnly || userRole === 'admin').map(item => (
+            <button
+              key={item.view}
+              onClick={() => handleNavigate(item.view)}
+              className={`w-full p-3 rounded-2xl flex items-center gap-3 text-left transition-all active:scale-95 ${
+                currentView === item.view
+                  ? 'bg-blue-50 text-blue-600'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <span className="text-lg">{item.emoji}</span>
+              <span className="text-sm font-black uppercase tracking-tighter">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        {/* Logout */}
+        <div className="p-4 border-t border-slate-100">
+          <button
+            onClick={() => { onLogout(); onClose(); }}
+            className="w-full p-3 bg-red-50 text-red-500 rounded-2xl flex items-center gap-3 hover:bg-red-100 transition-colors active:scale-95"
+          >
+            <LogOut size={18} />
+            <span className="text-sm font-black uppercase tracking-tighter">Cerrar Sesión</span>
+          </button>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -4040,10 +4273,8 @@ export default function LagunaNorteApp() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('Todas');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
-  const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [isDashOpen, setIsDashOpen] = useState(false);
-  const [isRecurringOpen, setIsRecurringOpen] = useState(false);
-  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [currentView, setCurrentView] = useState<AppView>('main');
+  const [menuOpen, setMenuOpen] = useState(false);
   const { items: recurringItems } = useRecurringWorkOrders();
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     try {
@@ -4172,10 +4403,13 @@ export default function LagunaNorteApp() {
     : ['Todas', 'Pendiente', 'En Proceso', 'Terminada'];
 
   return (
-    <div className="max-w-xl mx-auto min-h-screen pb-24 bg-slate-50">
+    <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex flex-col">
       {/* ─── Header ─── */}
       <header className="p-4 bg-white border-b border-slate-100 sticky top-0 z-40 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
+          <button onClick={() => setMenuOpen(true)} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+            <Menu size={20} className="text-slate-600" />
+          </button>
           <img src="/logo-laguna.jpg" alt="Laguna Norte" className="h-10 rounded-lg" />
           <div>
             <h1 className="text-sm font-black text-slate-800 uppercase tracking-tighter leading-none">Laguna Norte</h1>
@@ -4191,173 +4425,158 @@ export default function LagunaNorteApp() {
             <RefreshCw size={10} className={syncing ? 'animate-spin' : ''} />
             <span className="hidden sm:inline">{syncing ? 'Sincronizando...' : apiAvailable ? 'En línea' : 'Sin BD'}</span>
           </div>
-          <button
-            onClick={() => setIsCalendarOpen(true)}
-            className="p-2 bg-violet-50 rounded-full text-violet-600 hover:bg-violet-100 transition-colors"
-            title="Calendario"
-          >
-            <CalendarDays size={16} />
-          </button>
-          {userRole === 'admin' && (
-            <>
-              <button
-                onClick={() => setIsRecurringOpen(true)}
-                className="p-2 bg-emerald-50 rounded-full text-emerald-600 hover:bg-emerald-100 transition-colors"
-                title="OTs Repetitivas"
-              >
-                <Repeat size={16} />
-              </button>
-              <button
-                onClick={() => setIsDashOpen(true)}
-                className="p-2 bg-blue-50 rounded-full text-blue-600 hover:bg-blue-100 transition-colors"
-                title="Dashboard"
-              >
-                <BarChart3 size={16} />
-              </button>
-              <button
-                onClick={() => setIsAdminOpen(true)}
-                className="p-2 bg-slate-100 rounded-full text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                title="Administración"
-              >
-                <Settings size={16} />
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => {
-              localStorage.removeItem(USER_ROLE_KEY);
-              setUserRole(null);
-            }}
-            className="p-2 bg-slate-100 rounded-full text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
-            title="Cerrar sesión"
-          >
-            <LogOut size={16} />
-          </button>
           <img src="/logo-empresa.png" alt="CyJ" className="h-10 rounded-lg" />
         </div>
       </header>
 
-      <main className="p-4 space-y-5">
-        {/* ─── Stats Chips ─── */}
-        <div className="flex gap-3">
-          <div className="flex-1 bg-red-50 border border-red-100 p-3 rounded-2xl flex items-center gap-2">
-            <Clock className="text-red-500 flex-shrink-0" size={16} />
-            <div>
-              <div className="text-xl font-black text-red-600 leading-none">{visiblePendientes}</div>
-              <div className="text-[8px] font-bold text-red-400 uppercase tracking-wider">Pendientes</div>
+      {/* ─── Main OT List View ─── */}
+      {(currentView === 'main' || currentView === 'dashboard' || currentView === 'admin') && (
+        <main className="p-4 space-y-5 flex-1 pb-20">
+          {/* ─── Stats Chips ─── */}
+          <div className="flex gap-3">
+            <div className="flex-1 bg-red-50 border border-red-100 p-3 rounded-2xl flex items-center gap-2">
+              <Clock className="text-red-500 flex-shrink-0" size={16} />
+              <div>
+                <div className="text-xl font-black text-red-600 leading-none">{visiblePendientes}</div>
+                <div className="text-[8px] font-bold text-red-400 uppercase tracking-wider">Pendientes</div>
+              </div>
+            </div>
+            <div className="flex-1 bg-amber-50 border border-amber-100 p-3 rounded-2xl flex items-center gap-2">
+              <Zap className="text-amber-500 flex-shrink-0" size={16} />
+              <div>
+                <div className="text-xl font-black text-amber-600 leading-none">{visibleEnProceso}</div>
+                <div className="text-[8px] font-bold text-amber-400 uppercase tracking-wider">En Proceso</div>
+              </div>
+            </div>
+            <div className="flex-1 bg-emerald-50 border border-emerald-100 p-3 rounded-2xl flex items-center gap-2">
+              <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={16} />
+              <div>
+                <div className="text-xl font-black text-emerald-600 leading-none">{visibleTerminadas}</div>
+                <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider">Listas</div>
+              </div>
             </div>
           </div>
-          <div className="flex-1 bg-amber-50 border border-amber-100 p-3 rounded-2xl flex items-center gap-2">
-            <Zap className="text-amber-500 flex-shrink-0" size={16} />
-            <div>
-              <div className="text-xl font-black text-amber-600 leading-none">{visibleEnProceso}</div>
-              <div className="text-[8px] font-bold text-amber-400 uppercase tracking-wider">En Proceso</div>
+
+          {/* ─── Quick Create Categories ─── */}
+          <div>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Crear OT rápida</p>
+            <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
+              {CATEGORIES.map(cat => {
+                const IconComp = ICON_MAP[cat.icon];
+                return (
+                  <button key={cat.id} onClick={() => handleCreateFromCategory(cat)} className="flex-shrink-0 flex flex-col items-center gap-1.5 active:scale-90 transition-transform">
+                    <div className={`${cat.color} w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg`}>
+                      {IconComp && <IconComp size={18} />}
+                    </div>
+                    <span className="text-[7px] font-black uppercase text-slate-500">{cat.name}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
-          <div className="flex-1 bg-emerald-50 border border-emerald-100 p-3 rounded-2xl flex items-center gap-2">
-            <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={16} />
-            <div>
-              <div className="text-xl font-black text-emerald-600 leading-none">{visibleTerminadas}</div>
-              <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider">Listas</div>
-            </div>
-          </div>
-        </div>
 
-        {/* ─── Quick Create Categories ─── */}
-        <div>
-          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Crear OT rápida</p>
-          <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
-            {CATEGORIES.map(cat => {
-              const IconComp = ICON_MAP[cat.icon];
-              return (
-                <button key={cat.id} onClick={() => handleCreateFromCategory(cat)} className="flex-shrink-0 flex flex-col items-center gap-1.5 active:scale-90 transition-transform">
-                  <div className={`${cat.color} w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg`}>
-                    {IconComp && <IconComp size={18} />}
-                  </div>
-                  <span className="text-[7px] font-black uppercase text-slate-500">{cat.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ─── Status Filter Tabs ─── */}
-        <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl">
-          {availableFilters.map(s => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`flex-1 py-2 px-1 rounded-xl text-[9px] font-black uppercase transition-all ${
-                statusFilter === s
-                  ? 'bg-white text-slate-800 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              {s === 'Todas' ? `Todas (${workOrders.length})` : s}
-            </button>
-          ))}
-        </div>
-
-        {/* ─── Work Order List ─── */}
-        <div className="space-y-3">
-          {filteredOTs.map(ot => {
-            const wa = getWorkAreaForOT(ot);
-            return (
-              <div
-                key={ot.id}
-                onClick={() => handleEditOT(ot)}
-                className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer relative overflow-hidden active:scale-[0.98] transition-transform"
+          {/* ─── Status Filter Tabs ─── */}
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl">
+            {availableFilters.map(s => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`flex-1 py-2 px-1 rounded-xl text-[9px] font-black uppercase transition-all ${
+                  statusFilter === s
+                    ? 'bg-white text-slate-800 shadow-sm'
+                    : 'text-slate-400 hover:text-slate-600'
+                }`}
               >
-                <div className={`absolute left-0 top-0 bottom-0 w-1 ${wa?.color ?? STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}></div>
-                <div className="flex-1 truncate pr-3 pl-2">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
-                    <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
-                    <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
-                    {userRole === 'admin' && ot.startedAt && (
-                      <span className="text-[8px] text-amber-400 font-bold flex items-center gap-0.5">
-                        <Timer size={8} /> {formatDuration((ot.completedAt || Date.now()) - ot.startedAt)}
+                {s === 'Todas' ? `Todas (${workOrders.length})` : s}
+              </button>
+            ))}
+          </div>
+
+          {/* ─── Work Order List ─── */}
+          <div className="space-y-3">
+            {filteredOTs.map(ot => {
+              const wa = getWorkAreaForOT(ot);
+              return (
+                <div
+                  key={ot.id}
+                  onClick={() => handleEditOT(ot)}
+                  className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer relative overflow-hidden active:scale-[0.98] transition-transform"
+                >
+                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${wa?.color ?? STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}></div>
+                  <div className="flex-1 truncate pr-3 pl-2">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
+                      <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
+                      <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
+                      {userRole === 'admin' && ot.startedAt && (
+                        <span className="text-[8px] text-amber-400 font-bold flex items-center gap-0.5">
+                          <Timer size={8} /> {formatDuration((ot.completedAt || Date.now()) - ot.startedAt)}
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="font-black text-slate-800 uppercase truncate text-sm">{(ot.activities ?? []).join(', ')}</h4>
+                    <div className="flex items-center gap-3 mt-0.5">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                        <MapPin size={10} className="text-blue-500" /> {ot.zoneName}
+                      </p>
+                      {(ot.collaborators ?? []).length > 0 && (
+                        <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                          <User size={10} className="text-purple-500" /> {(ot.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    {wa && (
+                      <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${wa.color}`}>
+                        {wa.name}
                       </span>
                     )}
                   </div>
-                  <h4 className="font-black text-slate-800 uppercase truncate text-sm">{(ot.activities ?? []).join(', ')}</h4>
-                  <div className="flex items-center gap-3 mt-0.5">
-                    <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                      <MapPin size={10} className="text-blue-500" /> {ot.zoneName}
-                    </p>
-                    {(ot.collaborators ?? []).length > 0 && (
-                      <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                        <User size={10} className="text-purple-500" /> {(ot.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}
-                      </p>
-                    )}
-                  </div>
-                  {wa && (
-                    <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${wa.color}`}>
-                      {wa.name}
-                    </span>
-                  )}
+                  <ChevronRight className="text-slate-300 flex-shrink-0" size={18} />
                 </div>
-                <ChevronRight className="text-slate-300 flex-shrink-0" size={18} />
+              );
+            })}
+            {filteredOTs.length === 0 && (
+              <div className="text-center py-12">
+                <ClipboardList className="mx-auto text-slate-200 mb-3" size={40} />
+                <p className="text-slate-300 text-xs font-bold uppercase">No hay órdenes {statusFilter === 'Todas' ? '' : statusFilter.toLowerCase()}</p>
               </div>
-            );
-          })}
-          {filteredOTs.length === 0 && (
-            <div className="text-center py-12">
-              <ClipboardList className="mx-auto text-slate-200 mb-3" size={40} />
-              <p className="text-slate-300 text-xs font-bold uppercase">No hay órdenes {statusFilter === 'Todas' ? '' : statusFilter.toLowerCase()}</p>
-            </div>
-          )}
-        </div>
-      </main>
+            )}
+          </div>
+        </main>
+      )}
+
+      {/* ─── Calendar Full-Page View ─── */}
+      {currentView === 'calendar' && (
+        <CalendarPanel
+          onBack={() => setCurrentView('main')}
+          workOrders={workOrders}
+          recurringItems={recurringItems}
+          workAreas={workAreas}
+          userRole={userRole!}
+        />
+      )}
+
+      {/* ─── Recurring Full-Page View ─── */}
+      {currentView === 'recurring' && (
+        <RecurringPanel
+          onBack={() => setCurrentView('main')}
+          workAreas={workAreas}
+          personnel={personnel}
+          zones={zones}
+        />
+      )}
 
       {/* ─── Floating Action Button ─── */}
-      <button
-        onClick={handleOpenNew}
-        className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-300/50 active:scale-90 transition-transform z-50"
-      >
-        <Plus size={28} />
-      </button>
+      {currentView === 'main' && (
+        <button
+          onClick={handleOpenNew}
+          className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-300/50 active:scale-90 transition-transform z-50"
+        >
+          <Plus size={28} />
+        </button>
+      )}
 
+      {/* ─── Modal (OT detail) ─── */}
       <Modal
         isOpen={isModalOpen}
         editingItem={editingItem}
@@ -4371,9 +4590,10 @@ export default function LagunaNorteApp() {
         userRole={userRole}
       />
 
+      {/* ─── Admin Panel (side panel) ─── */}
       <AdminPanel
-        isOpen={isAdminOpen}
-        onClose={() => setIsAdminOpen(false)}
+        isOpen={currentView === 'admin'}
+        onClose={() => setCurrentView('main')}
         workAreas={workAreas}
         personnel={personnel}
         zones={zones}
@@ -4382,29 +4602,26 @@ export default function LagunaNorteApp() {
         onUpdateZones={updateZones}
       />
 
+      {/* ─── Admin Dashboard (side panel) ─── */}
       <AdminDashboard
-        isOpen={isDashOpen}
-        onClose={() => setIsDashOpen(false)}
+        isOpen={currentView === 'dashboard'}
+        onClose={() => setCurrentView('main')}
         workOrders={workOrders}
         workAreas={workAreas}
         personnel={personnel}
       />
 
-      <RecurringPanel
-        isOpen={isRecurringOpen}
-        onClose={() => setIsRecurringOpen(false)}
-        workAreas={workAreas}
-        personnel={personnel}
-        zones={zones}
-      />
-
-      <CalendarPanel
-        isOpen={isCalendarOpen}
-        onClose={() => setIsCalendarOpen(false)}
-        workOrders={workOrders}
-        recurringItems={recurringItems}
-        workAreas={workAreas}
-        userRole={userRole!}
+      {/* ─── Hamburger Menu ─── */}
+      <HamburgerMenu
+        isOpen={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        currentView={currentView}
+        onNavigate={(view) => setCurrentView(view)}
+        userRole={userRole}
+        onLogout={() => {
+          localStorage.removeItem(USER_ROLE_KEY);
+          setUserRole(null);
+        }}
       />
     </div>
   );
