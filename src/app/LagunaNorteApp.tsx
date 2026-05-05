@@ -1712,7 +1712,7 @@ function ModalInner({
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center">
       <div className="bg-white w-full max-w-lg rounded-t-[40px] sm:rounded-[40px] max-h-[90vh] overflow-y-auto p-8 shadow-2xl no-scrollbar">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter">Detalle de OT</h2>
+          <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter">Detalle Planificación</h2>
           <button onClick={onClose} className="p-2 bg-slate-100 rounded-full"><X size={20} /></button>
         </div>
 
@@ -4025,7 +4025,7 @@ function CalendarPanel({
                 {/* Actual Work Orders */}
                 {selectedOrders.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-[9px] font-black text-slate-400 uppercase">Órdenes de Trabajo</p>
+                    <p className="text-[9px] font-black text-slate-400 uppercase">Planificación</p>
                     {selectedOrders.map(ot => (
                       <div key={ot.id} className="bg-slate-50 rounded-2xl p-3 space-y-1.5">
                         <div className="flex items-center justify-between">
@@ -4144,7 +4144,7 @@ function HamburgerMenu({
   if (!isOpen) return null;
 
   const menuItems: { view: AppView; label: string; emoji: string; adminOnly?: boolean }[] = [
-    { view: 'main', label: 'Órdenes de Trabajo', emoji: '📋' },
+    { view: 'main', label: 'Planificación', emoji: '📋' },
     { view: 'calendar', label: 'Calendario', emoji: '📅' },
     { view: 'recurring', label: 'OTs Repetitivas', emoji: '🔄', adminOnly: true },
     { view: 'dashboard', label: 'Dashboard', emoji: '📊', adminOnly: true },
@@ -4499,7 +4499,7 @@ export default function LagunaNorteApp() {
 
           {/* ─── Quick Create Categories ─── */}
           <div>
-            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Crear OT rápida</p>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Crear Planificación</p>
             <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
               {CATEGORIES.map(cat => {
                 const IconComp = ICON_MAP[cat.icon];
@@ -4527,67 +4527,132 @@ export default function LagunaNorteApp() {
                     : 'text-slate-400 hover:text-slate-600'
                 }`}
               >
-                {s === 'Todas' ? `Todas (${workOrders.length})` : s}
+                {s === 'Todas' ? `Todas (${visibleWorkOrders.length})` : s}
               </button>
             ))}
           </div>
 
-          {/* ─── Work Order List ─── */}
-          <div className="space-y-3">
-            {filteredOTs.map(ot => {
-              const wa = getWorkAreaForOT(ot);
+          {/* ─── Grouped Planificación List ─── */}
+          {(() => {
+            const chileToday = toChileDateString(Date.now());
+            // Group OTs by their display date (plannedDate or createdAt)
+            const groups: { label: string; color: string; ots: WorkOrder[] }[] = [];
+            const todayOTs: WorkOrder[] = [];
+            const upcomingOTs: Map<string, WorkOrder[]> = new Map();
+            const noDateOTs: WorkOrder[] = [];
+            const pastOTs: Map<string, WorkOrder[]> = new Map();
+
+            for (const ot of filteredOTs) {
+              const dateKey = ot.plannedDate ? toChileDateString(ot.plannedDate) : toChileDateString(ot.createdAt);
+              if (dateKey === chileToday) {
+                todayOTs.push(ot);
+              } else if (ot.plannedDate && ot.plannedDate > Date.now()) {
+                if (!upcomingOTs.has(dateKey)) upcomingOTs.set(dateKey, []);
+                upcomingOTs.get(dateKey)!.push(ot);
+              } else if (!ot.plannedDate) {
+                noDateOTs.push(ot);
+              } else {
+                if (!pastOTs.has(dateKey)) pastOTs.set(dateKey, []);
+                pastOTs.get(dateKey)!.push(ot);
+              }
+            }
+
+            if (todayOTs.length > 0) groups.push({ label: 'Hoy', color: 'text-blue-600', ots: todayOTs });
+            const sortedUpcoming = [...upcomingOTs.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+            for (const [dateKey, ots] of sortedUpcoming) {
+              const parts = dateKey.split('-');
+              const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+              const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+              groups.push({ label: `${dayNames[d.getDay()]} ${d.getDate()} ${CHILE_MONTHS[d.getMonth()]}`, color: 'text-violet-600', ots });
+            }
+            if (noDateOTs.length > 0) groups.push({ label: 'Sin planificar', color: 'text-slate-400', ots: noDateOTs });
+            const sortedPast = [...pastOTs.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+            for (const [dateKey, ots] of sortedPast) {
+              const parts = dateKey.split('-');
+              const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+              const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+              groups.push({ label: `${dayNames[d.getDay()]} ${d.getDate()} ${CHILE_MONTHS[d.getMonth()]}`, color: 'text-slate-400', ots });
+            }
+
+            if (groups.length === 0) {
               return (
-                <div
-                  key={ot.id}
-                  onClick={() => handleEditOT(ot)}
-                  className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer relative overflow-hidden active:scale-[0.98] transition-transform"
-                >
-                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${wa?.color ?? STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}></div>
-                  <div className="flex-1 truncate pr-3 pl-2">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
-                      <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
-                      {ot.plannedDate ? (
-                        <span className="text-[8px] text-violet-500 font-black flex items-center gap-0.5">
-                          <CalendarDays size={8} /> {formatDate(ot.plannedDate)}
-                        </span>
-                      ) : (
-                        <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
-                      )}
-                      {userRole === 'admin' && ot.startedAt && (
-                        <span className="text-[8px] text-amber-400 font-bold flex items-center gap-0.5">
-                          <Timer size={8} /> {formatDuration((ot.completedAt || Date.now()) - ot.startedAt)}
-                        </span>
-                      )}
-                    </div>
-                    <h4 className="font-black text-slate-800 uppercase truncate text-sm">{(ot.activities ?? []).join(', ')}</h4>
-                    <div className="flex items-center gap-3 mt-0.5">
-                      <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                        <MapPin size={10} className="text-blue-500" /> {ot.zoneName}
-                      </p>
-                      {(ot.collaborators ?? []).length > 0 && (
-                        <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                          <User size={10} className="text-purple-500" /> {(ot.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}
-                        </p>
-                      )}
-                    </div>
-                    {wa && (
-                      <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${wa.color}`}>
-                        {wa.name}
-                      </span>
-                    )}
-                  </div>
-                  <ChevronRight className="text-slate-300 flex-shrink-0" size={18} />
+                <div className="text-center py-12">
+                  <ClipboardList className="mx-auto text-slate-200 mb-3" size={40} />
+                  <p className="text-slate-300 text-xs font-bold uppercase">No hay planificación {statusFilter === 'Todas' ? '' : statusFilter.toLowerCase()}</p>
                 </div>
               );
-            })}
-            {filteredOTs.length === 0 && (
-              <div className="text-center py-12">
-                <ClipboardList className="mx-auto text-slate-200 mb-3" size={40} />
-                <p className="text-slate-300 text-xs font-bold uppercase">No hay órdenes {statusFilter === 'Todas' ? '' : statusFilter.toLowerCase()}</p>
+            }
+
+            return (
+              <div className="space-y-4">
+                {groups.map(group => (
+                  <div key={group.label}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-[10px] font-black uppercase tracking-wider ${group.color}`}>{group.label}</span>
+                      <span className="text-[8px] font-bold text-slate-300 bg-slate-50 px-2 py-0.5 rounded-full">{group.ots.length}</span>
+                      {group.label === 'Hoy' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />}
+                    </div>
+                    <div className="space-y-2">
+                      {group.ots.map(ot => {
+                        const wa = getWorkAreaForOT(ot);
+                        return (
+                          <div
+                            key={ot.id}
+                            onClick={() => handleEditOT(ot)}
+                            className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer relative overflow-hidden active:scale-[0.98] transition-transform"
+                          >
+                            <div className={`absolute left-0 top-0 bottom-0 w-1 ${wa?.color ?? STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}></div>
+                            <div className="flex-1 truncate pr-3 pl-2">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
+                                <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
+                                {ot.plannedDate && group.label !== 'Hoy' && group.label !== 'Sin planificar' ? null : ot.plannedDate ? (
+                                  <span className="text-[8px] text-violet-500 font-black flex items-center gap-0.5">
+                                    <CalendarDays size={8} /> {formatDate(ot.plannedDate)}
+                                  </span>
+                                ) : (
+                                  <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
+                                )}
+                                {userRole === 'admin' && ot.startedAt && (
+                                  <span className="text-[8px] text-amber-400 font-bold flex items-center gap-0.5">
+                                    <Timer size={8} /> {formatDuration((ot.completedAt || Date.now()) - ot.startedAt)}
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="font-black text-slate-800 uppercase truncate text-sm">{(ot.activities ?? []).join(', ')}</h4>
+                              <div className="flex items-center gap-3 mt-0.5">
+                                <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                                  <MapPin size={10} className="text-blue-500" /> {ot.zoneName}
+                                </p>
+                                {(ot.collaborators ?? []).length > 0 && (
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                                    <User size={10} className="text-purple-500" /> {(ot.collaborators ?? []).map(c => c.split(' ').slice(0, 2).join(' ')).join(', ')}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                {wa && (
+                                  <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${wa.color}`}>
+                                    {wa.name}
+                                  </span>
+                                )}
+                                {ot.recurringId && (
+                                  <span className="px-1.5 py-0.5 rounded-full text-[7px] font-black uppercase bg-blue-50 text-blue-500 flex items-center gap-0.5">
+                                    <Repeat size={7} /> recurrente
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <ChevronRight className="text-slate-300 flex-shrink-0" size={18} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
-            )}
-          </div>
+            );
+          })()}
         </main>
       )}
 
