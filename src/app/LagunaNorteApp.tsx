@@ -7,7 +7,7 @@ import {
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
-  Repeat, Pause, Play, ChevronLeft, Menu
+  Repeat, Pause, Play, ChevronLeft, Menu, Users
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -141,6 +141,14 @@ interface RecurringWorkOrderItem {
   updatedAt: number;
 }
 
+interface ProfileItem {
+  id: string;
+  name: string;
+  workAreaIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 /* ─── Migration helper (backward compat) ─── */
 
 function migrateWorkOrder(ot: any): WorkOrder {
@@ -194,7 +202,7 @@ const USER_ROLE_KEY = 'laguna_norte_user_role';
 const ADMIN_PWD_KEY = 'laguna_norte_admin_pwd';
 const DEFAULT_ADMIN_PWD = 'admin2024';
 
-type UserRole = 'admin' | 'usuario';
+type UserRole = 'admin' | `profile:${string}`;
 
 function getAdminPwd(): string {
   try { return localStorage.getItem(ADMIN_PWD_KEY) || DEFAULT_ADMIN_PWD; } catch { return DEFAULT_ADMIN_PWD; }
@@ -565,6 +573,75 @@ function useRecurringWorkOrders() {
   }, []);
 
   return { items, loading, createItem, updateItem, deleteItem, generateToday, refetch: fetchItems };
+}
+
+/* ─── Custom Hook: useProfiles ─── */
+
+function useProfiles() {
+  const [profiles, setProfiles] = useState<ProfileItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchProfiles = useCallback(async () => {
+    try {
+      const res = await fetch('/api/profiles');
+      if (!res.ok) throw new Error('API not available');
+      const data = await res.json();
+      setProfiles(Array.isArray(data) ? data : []);
+    } catch {
+      setProfiles([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchProfiles();
+  }, [fetchProfiles]);
+
+  const createProfile = useCallback(async (data: Partial<ProfileItem>): Promise<ProfileItem | null> => {
+    try {
+      const res = await fetch('/api/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        await fetchProfiles();
+        return created;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [fetchProfiles]);
+
+  const updateProfile = useCallback(async (id: string, data: Partial<ProfileItem>): Promise<ProfileItem | null> => {
+    try {
+      const res = await fetch(`/api/profiles/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        await fetchProfiles();
+        return updated;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [fetchProfiles]);
+
+  const deleteProfile = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/profiles/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchProfiles();
+        return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  }, [fetchProfiles]);
+
+  return { profiles, loading, createProfile, updateProfile, deleteProfile, refetch: fetchProfiles };
 }
 
 /* ─── Custom Hook: useConfigData ─── */
@@ -1096,7 +1173,7 @@ function SecurityTab() {
 
 /* ─── Admin Panel Component ─── */
 
-type AdminTab = 'areas' | 'personal' | 'zonas' | 'seguridad';
+type AdminTab = 'areas' | 'personal' | 'zonas' | 'seguridad' | 'profiles';
 
 function AdminPanel({
   isOpen,
@@ -1107,6 +1184,10 @@ function AdminPanel({
   onUpdateWorkAreas,
   onUpdatePersonnel,
   onUpdateZones,
+  profiles,
+  onCreateProfile,
+  onUpdateProfile,
+  onDeleteProfile,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -1116,6 +1197,10 @@ function AdminPanel({
   onUpdateWorkAreas: (areas: WorkArea[]) => void;
   onUpdatePersonnel: (p: Personnel[]) => void;
   onUpdateZones: (z: Zone[]) => void;
+  profiles: ProfileItem[];
+  onCreateProfile: (data: Partial<ProfileItem>) => Promise<ProfileItem | null>;
+  onUpdateProfile: (id: string, data: Partial<ProfileItem>) => Promise<ProfileItem | null>;
+  onDeleteProfile: (id: string) => Promise<boolean>;
 }) {
   const [activeTab, setActiveTab] = useState<AdminTab>('areas');
   const [editingArea, setEditingArea] = useState<WorkArea | null>(null);
@@ -1127,6 +1212,11 @@ function AdminPanel({
   const [newPersonName, setNewPersonName] = useState('');
   const [newPersonWorkAreaId, setNewPersonWorkAreaId] = useState('');
   const [newZoneName, setNewZoneName] = useState('');
+  const [newProfileName, setNewProfileName] = useState('');
+  const [newProfileWorkAreaIds, setNewProfileWorkAreaIds] = useState<string[]>([]);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [editingProfileName, setEditingProfileName] = useState('');
+  const [editingProfileWorkAreaIds, setEditingProfileWorkAreaIds] = useState<string[]>([]);
 
   const COLOR_OPTIONS = [
     'bg-green-600', 'bg-orange-500', 'bg-cyan-500', 'bg-purple-500', 'bg-yellow-500',
@@ -1228,10 +1318,33 @@ function AdminPanel({
 
   const getWorkAreaName = (id: string) => workAreas.find(a => a.id === id)?.name ?? 'Sin área';
 
+  // Profile CRUD
+  const handleAddProfile = async () => {
+    if (!newProfileName.trim()) return;
+    await onCreateProfile({ name: newProfileName.trim(), workAreaIds: newProfileWorkAreaIds });
+    setNewProfileName('');
+    setNewProfileWorkAreaIds([]);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!editingProfileId || !editingProfileName.trim()) return;
+    await onUpdateProfile(editingProfileId, { name: editingProfileName.trim(), workAreaIds: editingProfileWorkAreaIds });
+    setEditingProfileId(null);
+  };
+
+  const handleDeleteProfile = async (id: string) => {
+    if (confirm('¿Eliminar este perfil?')) {
+      await onDeleteProfile(id);
+    }
+  };
+
+  const profilesList = profiles;
+
   const tabs: { key: AdminTab; label: string }[] = [
-    { key: 'areas', label: 'Áreas de Trabajo' },
+    { key: 'areas', label: 'Áreas' },
     { key: 'personal', label: 'Personal' },
     { key: 'zonas', label: 'Zonas' },
+    { key: 'profiles', label: 'Perfiles' },
     { key: 'seguridad', label: 'Clave' },
   ];
 
@@ -1500,6 +1613,164 @@ function AdminPanel({
           )}
 
           {activeTab === 'seguridad' && <SecurityTab />}
+
+          {/* ─── Profiles Tab ─── */}
+          {activeTab === 'profiles' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 mb-2">
+                <Users size={20} className="text-purple-600" />
+                <div>
+                  <p className="font-black text-slate-800 text-sm uppercase">Perfiles por Cargo</p>
+                  <p className="text-[9px] text-slate-400 font-medium">Crea perfiles para cada cargo. Los usuarios con perfil solo pueden ver OTs de sus áreas, subir fotos y completar OTs.</p>
+                </div>
+              </div>
+
+              {/* Add new profile form */}
+              <div className="bg-slate-50 rounded-2xl p-4 space-y-3">
+                <p className="text-[9px] font-black text-slate-400 uppercase">Nuevo Perfil</p>
+                <input
+                  type="text"
+                  value={newProfileName}
+                  onChange={e => setNewProfileName(e.target.value)}
+                  placeholder="Nombre del cargo (ej: Jardinería, Aseo...)"
+                  className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
+                />
+                {/* Work area selector - checkboxes */}
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Áreas de trabajo que puede ver</p>
+                  <div className="flex flex-wrap gap-2">
+                    {workAreas.map(wa => (
+                      <button
+                        key={wa.id}
+                        type="button"
+                        onClick={() => {
+                          setNewProfileWorkAreaIds(prev =>
+                            prev.includes(wa.id) ? prev.filter(id => id !== wa.id) : [...prev, wa.id]
+                          );
+                        }}
+                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
+                          newProfileWorkAreaIds.includes(wa.id)
+                            ? 'bg-purple-600 text-white shadow-md'
+                            : 'bg-white text-slate-400 border border-slate-200'
+                        }`}
+                      >
+                        {wa.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={handleAddProfile}
+                  disabled={!newProfileName.trim()}
+                  className="w-full py-3 bg-purple-600 text-white rounded-xl font-black text-[10px] uppercase disabled:opacity-30 active:scale-95 transition-transform"
+                >
+                  Crear Perfil
+                </button>
+              </div>
+
+              {/* Existing profiles list */}
+              {profilesList.map(profile => (
+                <div key={profile.id} className="bg-white rounded-2xl p-4 border border-slate-100 space-y-3">
+                  {editingProfileId === profile.id ? (
+                    // Edit mode
+                    <>
+                      <input
+                        type="text"
+                        value={editingProfileName}
+                        onChange={e => setEditingProfileName(e.target.value)}
+                        className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 font-bold text-sm"
+                      />
+                      <div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Áreas de trabajo que puede ver</p>
+                        <div className="flex flex-wrap gap-2">
+                          {workAreas.map(wa => (
+                            <button
+                              key={wa.id}
+                              type="button"
+                              onClick={() => {
+                                setEditingProfileWorkAreaIds(prev =>
+                                  prev.includes(wa.id) ? prev.filter(id => id !== wa.id) : [...prev, wa.id]
+                                );
+                              }}
+                              className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${
+                                editingProfileWorkAreaIds.includes(wa.id)
+                                  ? 'bg-purple-600 text-white shadow-md'
+                                  : 'bg-slate-50 text-slate-400 border border-slate-100'
+                              }`}
+                            >
+                              {wa.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleSaveProfile}
+                          className="flex-1 py-2 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase active:scale-95 transition-transform"
+                        >
+                          Guardar
+                        </button>
+                        <button
+                          onClick={() => setEditingProfileId(null)}
+                          className="flex-1 py-2 bg-slate-200 text-slate-500 rounded-xl font-bold text-[10px] uppercase"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    // View mode
+                    <>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-black text-slate-800 text-sm uppercase">{profile.name}</p>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {profile.workAreaIds.map(waId => {
+                              const wa = workAreas.find(a => a.id === waId);
+                              return wa ? (
+                                <span key={waId} className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${wa.color}`}>
+                                  {wa.name}
+                                </span>
+                              ) : null;
+                            })}
+                            {profile.workAreaIds.length === 0 && (
+                              <span className="text-[9px] text-slate-300 italic">Sin áreas asignadas</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setEditingProfileId(profile.id);
+                              setEditingProfileName(profile.name);
+                              setEditingProfileWorkAreaIds([...profile.workAreaIds]);
+                            }}
+                            className="p-2 bg-blue-50 text-blue-600 rounded-xl active:scale-95 transition-transform"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteProfile(profile.id)}
+                            className="p-2 bg-red-50 text-red-500 rounded-xl active:scale-95 transition-transform"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+
+              {profilesList.length === 0 && (
+                <div className="text-center py-8">
+                  <Users className="mx-auto text-slate-200 mb-3" size={40} />
+                  <p className="text-slate-300 text-xs font-bold uppercase">No hay perfiles creados</p>
+                  <p className="text-slate-300 text-[9px] mt-1">Crea perfiles para que los trabajadores accedan según su cargo</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1558,6 +1829,9 @@ function ModalInner({
   const [customActivity, setCustomActivity] = useState('');
   const [validationError, setValidationError] = useState('');
   const [descriptionManuallyEdited, setDescriptionManuallyEdited] = useState(!!editingItem?.description);
+
+  const isProfileRole = typeof userRole === 'string' && userRole.startsWith('profile:');
+  const isReadOnly = isProfileRole;
 
   // Derived filtered data based on selected work area
   const selectedWorkArea = workAreas.find(wa => wa.id === form.workAreaId);
@@ -1723,24 +1997,24 @@ function ModalInner({
             icon={Settings}
             options={workAreaOptions}
             selected={form.workAreaId}
-            onSelect={handleWorkAreaChange}
+            onSelect={isReadOnly ? () => {} : handleWorkAreaChange}
             placeholder="Seleccionar área de trabajo..."
           />
 
           {/* 2. Activities (filtered by work area) */}
           <MultiSelectActivities
             selected={form.activities}
-            onToggle={handleToggleActivity}
+            onToggle={isReadOnly ? () => {} : handleToggleActivity}
             customActivity={customActivity}
-            onCustomActivityChange={setCustomActivity}
-            onAddCustom={handleAddCustomActivity}
+            onCustomActivityChange={isReadOnly ? () => {} : setCustomActivity}
+            onAddCustom={isReadOnly ? () => {} : handleAddCustomActivity}
             availableActivities={filteredActivities}
           />
 
           {/* 3. Collaborators (all personnel available, area personnel shown first) */}
           <MultiSelectCollaborators
             selected={form.collaborators}
-            onToggle={handleToggleCollaborator}
+            onToggle={isReadOnly ? () => {} : handleToggleCollaborator}
             availableCollaborators={filteredCollaborators}
             selectedWorkAreaId={form.workAreaId}
           />
@@ -1751,7 +2025,7 @@ function ModalInner({
             icon={MapPin}
             options={zoneOptions}
             selected={form.zoneName}
-            onSelect={(z) => { setForm(prev => ({ ...prev, zoneName: z })); setValidationError(''); }}
+            onSelect={isReadOnly ? () => {} : (z: string) => { setForm(prev => ({ ...prev, zoneName: z })); setValidationError(''); }}
             placeholder="Seleccionar zona..."
             searchable
           />
@@ -1764,7 +2038,7 @@ function ModalInner({
             <input
               type="date"
               value={form.plannedDate ? new Date(form.plannedDate).toISOString().split('T')[0] : ''}
-              onChange={e => {
+              onChange={isReadOnly ? undefined : e => {
                 const val = e.target.value;
                 setForm(prev => ({
                   ...prev,
@@ -1772,9 +2046,10 @@ function ModalInner({
                 }));
                 setValidationError('');
               }}
-              className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm"
+              disabled={isReadOnly}
+              className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm disabled:opacity-50"
             />
-            {form.plannedDate && (
+            {!isReadOnly && form.plannedDate && (
               <button
                 type="button"
                 onClick={() => setForm(prev => ({ ...prev, plannedDate: null }))}
@@ -1789,10 +2064,11 @@ function ModalInner({
           <div>
             <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Observaciones *</label>
             <textarea
-              className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-medium text-sm min-h-[80px]"
+              className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-medium text-sm min-h-[80px] disabled:opacity-50"
               placeholder="Detalle de la tarea..."
               value={form.description}
-              onChange={e => handleDescriptionChange(e.target.value)}
+              onChange={isReadOnly ? undefined : e => handleDescriptionChange(e.target.value)}
+              disabled={isReadOnly}
             />
           </div>
 
@@ -1811,7 +2087,9 @@ function ModalInner({
           {/* 7. Status */}
           <div className="flex gap-2">
             {Object.keys(STATUS_CONFIG).map(s => {
-              const isRestricted = s === 'Terminada' && userRole !== 'admin';
+              const isRestricted = isProfileRole
+                ? s !== 'Terminada'  // profile users can only select Terminada
+                : s === 'Terminada' && userRole !== 'admin';  // original logic
               return (
                 <button
                   key={s}
@@ -1901,13 +2179,15 @@ function ModalInner({
 
           {editingItem?.id && (
             <div className="flex gap-2 pt-2 border-t">
-              <button
-                type="button"
-                onClick={() => onGeneratePDF(editingItem)}
-                className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2"
-              >
-                <Download size={14} /> PDF
-              </button>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => onGeneratePDF(editingItem)}
+                  className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2"
+                >
+                  <Download size={14} /> PDF
+                </button>
+              )}
               {userRole === 'admin' && (
                 <button
                   type="button"
@@ -4133,6 +4413,7 @@ function HamburgerMenu({
   onNavigate,
   userRole,
   onLogout,
+  currentProfile,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -4140,8 +4421,11 @@ function HamburgerMenu({
   onNavigate: (view: AppView) => void;
   userRole: UserRole;
   onLogout: () => void;
+  currentProfile?: ProfileItem | null;
 }) {
   if (!isOpen) return null;
+
+  const isAdmin = userRole === 'admin';
 
   const menuItems: { view: AppView; label: string; emoji: string; adminOnly?: boolean }[] = [
     { view: 'main', label: 'Planificación', emoji: '📋' },
@@ -4173,15 +4457,15 @@ function HamburgerMenu({
 
         {/* Role Badge */}
         <div className="px-4 py-3 border-b border-slate-100">
-          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[9px] font-black uppercase ${userRole === 'admin' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
-            {userRole === 'admin' ? <Shield size={12} /> : <Eye size={12} />}
-            {userRole === 'admin' ? 'Administrador' : 'Usuario'}
+          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[9px] font-black uppercase ${isAdmin ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
+            {isAdmin ? <Shield size={12} /> : <User size={12} />}
+            {isAdmin ? 'Administrador' : currentProfile?.name ?? 'Usuario'}
           </div>
         </div>
 
         {/* Menu Items */}
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto no-scrollbar">
-          {menuItems.filter(item => !item.adminOnly || userRole === 'admin').map(item => (
+          {menuItems.filter(item => !item.adminOnly || isAdmin).map(item => (
             <button
               key={item.view}
               onClick={() => handleNavigate(item.view)}
@@ -4216,6 +4500,7 @@ function HamburgerMenu({
 
 function ProfileLogin({ onLogin }: { onLogin: (role: UserRole) => void }) {
   const [showPwdModal, setShowPwdModal] = useState(false);
+  const { profiles, loading: profilesLoading } = useProfiles();
 
   return (
     <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex items-center justify-center p-6">
@@ -4227,6 +4512,7 @@ function ProfileLogin({ onLogin }: { onLogin: (role: UserRole) => void }) {
         </div>
         <div className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
           <p className="text-center text-sm font-bold text-slate-500 uppercase">Selecciona tu perfil</p>
+          {/* Admin button */}
           <button
             onClick={() => setShowPwdModal(true)}
             className="w-full py-5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-2xl font-black uppercase shadow-lg shadow-blue-200 active:scale-95 transition-transform flex items-center justify-center gap-3"
@@ -4237,19 +4523,36 @@ function ProfileLogin({ onLogin }: { onLogin: (role: UserRole) => void }) {
               <div className="text-[9px] font-semibold opacity-80">Requiere clave de acceso</div>
             </div>
           </button>
-          <button
-            onClick={() => {
-              localStorage.setItem(USER_ROLE_KEY, 'usuario');
-              onLogin('usuario');
-            }}
-            className="w-full py-5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-2xl font-black uppercase shadow-lg shadow-emerald-200 active:scale-95 transition-transform flex items-center justify-center gap-3"
-          >
-            <Eye size={22} />
-            <div className="text-left">
-              <div className="text-sm">Usuario</div>
-              <div className="text-[9px] font-semibold opacity-80">Solo órdenes pendientes y en proceso</div>
+
+          {/* Dynamic profiles */}
+          {profilesLoading && (
+            <div className="flex items-center justify-center py-4">
+              <div className="w-5 h-5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
             </div>
-          </button>
+          )}
+          {!profilesLoading && profiles.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-center text-[9px] font-black text-slate-400 uppercase tracking-wider">Perfiles por Cargo</p>
+              {profiles.map(profile => (
+                <button
+                  key={profile.id}
+                  onClick={() => {
+                    localStorage.setItem(USER_ROLE_KEY, `profile:${profile.id}`);
+                    onLogin(`profile:${profile.id}`);
+                  }}
+                  className="w-full py-4 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-2xl font-black uppercase shadow-lg shadow-emerald-200 active:scale-95 transition-transform flex items-center justify-center gap-3"
+                >
+                  <User size={20} />
+                  <div className="text-left">
+                    <div className="text-sm">{profile.name}</div>
+                    <div className="text-[9px] font-semibold opacity-80">
+                      Solo ver, subir fotos y completar OTs
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <p className="text-center text-[8px] text-slate-300 mt-6 font-medium uppercase">Administración - Asesorías Integrales CyJ</p>
       </div>
@@ -4310,6 +4613,7 @@ function PasswordModal({ onUnlock, onCancel }: { onUnlock: (pwd: string) => void
 export default function LagunaNorteApp() {
   const { workOrders, loading, syncing, apiAvailable, lastSync, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders();
   const { workAreas, personnel, zones, updateWorkAreas, updatePersonnel, updateZones } = useConfigData();
+  const { profiles, createProfile, updateProfile, deleteProfile } = useProfiles();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('Todas');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
@@ -4319,10 +4623,17 @@ export default function LagunaNorteApp() {
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     try {
       const saved = localStorage.getItem(USER_ROLE_KEY);
-      // Only auto-restore 'usuario' role, NOT admin (requires password each time)
-      return saved === 'usuario' ? 'usuario' : null;
+      if (saved === 'admin' || (saved && saved.startsWith('profile:'))) {
+        return saved as UserRole;
+      }
+      return null;
     } catch { return null; }
   });
+
+  const currentProfile = userRole?.startsWith('profile:')
+    ? profiles.find(p => p.id === userRole.replace('profile:', ''))
+    : null;
+  const isProfileUser = !!currentProfile;
 
   const handleSaveOT = useCallback(async (data: Partial<WorkOrder>) => {
     if (data.id) {
@@ -4424,10 +4735,25 @@ export default function LagunaNorteApp() {
     return <ProfileLogin onLogin={(role) => setUserRole(role)} />;
   }
 
-  // Visible work orders: usuario can only see Pendiente and En Proceso
-  const visibleWorkOrders = userRole === 'usuario'
-    ? workOrders.filter(o => o.status === 'Pendiente' || o.status === 'En Proceso')
-    : workOrders;
+  // Visible work orders: profile users can only see OTs from their assigned work areas
+  const visibleWorkOrders = (() => {
+    if (userRole === 'admin') return workOrders;
+    if (isProfileUser && currentProfile) {
+      // Profile user: can only see OTs from their assigned work areas
+      return workOrders.filter(ot => {
+        // Match OT to a work area
+        for (const waId of currentProfile.workAreaIds) {
+          const wa = workAreas.find(a => a.id === waId);
+          if (wa && ot.activities.some(a => wa.activities.includes(a))) {
+            return true;
+          }
+        }
+        return false;
+      });
+    }
+    // Fallback: non-admin, non-profile (legacy)
+    return workOrders.filter(o => o.status === 'Pendiente' || o.status === 'En Proceso');
+  })();
 
   const visiblePendientes = visibleWorkOrders.filter(o => o.status === 'Pendiente').length;
   const visibleEnProceso = visibleWorkOrders.filter(o => o.status === 'En Proceso').length;
@@ -4438,9 +4764,11 @@ export default function LagunaNorteApp() {
     : visibleWorkOrders.filter(o => o.status === statusFilter);
 
   // Available filters based on role
-  const availableFilters: StatusFilter[] = userRole === 'usuario'
-    ? ['Todas', 'Pendiente', 'En Proceso']
-    : ['Todas', 'Pendiente', 'En Proceso', 'Terminada'];
+  const availableFilters: StatusFilter[] = (userRole === 'admin')
+    ? ['Todas', 'Pendiente', 'En Proceso', 'Terminada']
+    : isProfileUser
+      ? ['Todas', 'Pendiente', 'En Proceso', 'Terminada']
+      : ['Todas', 'Pendiente', 'En Proceso'];
 
   return (
     <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex flex-col">
@@ -4458,8 +4786,8 @@ export default function LagunaNorteApp() {
         </div>
         <div className="flex items-center gap-2">
           <div className={`flex items-center gap-1 text-[8px] font-black uppercase px-2 py-1 rounded-full ${userRole === 'admin' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
-            {userRole === 'admin' ? <Shield size={10} /> : <Eye size={10} />}
-            <span className="hidden sm:inline">{userRole === 'admin' ? 'Admin' : 'Usuario'}</span>
+            {userRole === 'admin' ? <Shield size={10} /> : <User size={10} />}
+            <span className="hidden sm:inline">{userRole === 'admin' ? 'Admin' : currentProfile?.name ?? 'Usuario'}</span>
           </div>
           <div className={`flex items-center gap-1 text-[8px] font-black uppercase ${syncing ? 'text-amber-500' : apiAvailable ? 'text-emerald-500' : 'text-orange-400'}`}>
             <RefreshCw size={10} className={syncing ? 'animate-spin' : ''} />
@@ -4498,6 +4826,7 @@ export default function LagunaNorteApp() {
           </div>
 
           {/* ─── Quick Create Categories ─── */}
+          {!isProfileUser && (
           <div>
             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Crear Planificación</p>
             <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
@@ -4514,6 +4843,7 @@ export default function LagunaNorteApp() {
               })}
             </div>
           </div>
+          )}
 
           {/* ─── Status Filter Tabs ─── */}
           <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl">
@@ -4678,7 +5008,7 @@ export default function LagunaNorteApp() {
       )}
 
       {/* ─── Floating Action Button ─── */}
-      {currentView === 'main' && (
+      {currentView === 'main' && !isProfileUser && (
         <button
           onClick={handleOpenNew}
           className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-300/50 active:scale-90 transition-transform z-50"
@@ -4711,6 +5041,10 @@ export default function LagunaNorteApp() {
         onUpdateWorkAreas={updateWorkAreas}
         onUpdatePersonnel={updatePersonnel}
         onUpdateZones={updateZones}
+        profiles={profiles}
+        onCreateProfile={createProfile}
+        onUpdateProfile={updateProfile}
+        onDeleteProfile={deleteProfile}
       />
 
       {/* ─── Admin Dashboard (side panel) ─── */}
@@ -4729,6 +5063,7 @@ export default function LagunaNorteApp() {
         currentView={currentView}
         onNavigate={(view) => setCurrentView(view)}
         userRole={userRole}
+        currentProfile={currentProfile}
         onLogout={() => {
           localStorage.removeItem(USER_ROLE_KEY);
           setUserRole(null);
