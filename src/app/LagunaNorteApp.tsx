@@ -5,7 +5,7 @@ import {
   Zap, Leaf, Brush, Trash2, Wrench, Clock, CheckCircle2,
   MapPin, ChevronRight, X, Plus, ClipboardList,
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
-  RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye,
+  RefreshCw, Settings, Pencil, Droplets, Flame, Shield, ShieldCheck, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
   Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star
 } from 'lucide-react';
@@ -1254,6 +1254,7 @@ function AdminPanel({
 
   const PERMISSION_OPTIONS = [
     { value: 'view', label: 'Visualizar', desc: 'Ver OTs, subir fotos y completar', color: 'bg-blue-500' },
+    { value: 'supervisor', label: 'Supervisor', desc: 'Ve TODAS las OTs (pendientes, en proceso, terminadas)', color: 'bg-violet-500' },
     { value: 'create', label: 'Crear', desc: 'Crear nuevas OTs', color: 'bg-emerald-500' },
     { value: 'edit', label: 'Editar', desc: 'Editar OTs existentes', color: 'bg-amber-500' },
     { value: 'delete', label: 'Eliminar', desc: 'Eliminar OTs', color: 'bg-red-500' },
@@ -1753,6 +1754,7 @@ function AdminPanel({
                         >
                           <div className={`w-8 h-8 rounded-lg ${perm.color} flex items-center justify-center flex-shrink-0 ${isActive ? '' : 'opacity-40'}`}>
                             {perm.value === 'view' && <Eye size={14} className="text-white" />}
+                            {perm.value === 'supervisor' && <ShieldCheck size={14} className="text-white" />}
                             {perm.value === 'create' && <Plus size={14} className="text-white" />}
                             {perm.value === 'edit' && <Pencil size={14} className="text-white" />}
                             {perm.value === 'delete' && <Trash2 size={14} className="text-white" />}
@@ -1885,6 +1887,7 @@ function AdminPanel({
                               >
                                 <div className={`w-8 h-8 rounded-lg ${perm.color} flex items-center justify-center flex-shrink-0 ${isActive ? '' : 'opacity-40'}`}>
                                   {perm.value === 'view' && <Eye size={14} className="text-white" />}
+                                  {perm.value === 'supervisor' && <ShieldCheck size={14} className="text-white" />}
                                   {perm.value === 'create' && <Plus size={14} className="text-white" />}
                                   {perm.value === 'edit' && <Pencil size={14} className="text-white" />}
                                   {perm.value === 'delete' && <Trash2 size={14} className="text-white" />}
@@ -2078,6 +2081,7 @@ function ModalInner({
 
   const isProfileRole = typeof userRole === 'string' && userRole.startsWith('profile:');
   const perms = permissions ?? ['view'];
+  const isSupervisorProfile = isProfileRole && perms.includes('supervisor');
   // Read-only for profile users without edit permission (editing existing items)
   // or without create permission (creating new items)
   const canEditThis = editingItem?.id ? perms.includes('edit') : perms.includes('create');
@@ -2337,9 +2341,12 @@ function ModalInner({
           {/* 7. Status */}
           <div className="flex gap-2">
             {Object.keys(STATUS_CONFIG).map(s => {
+              // Supervisor profiles can change to any status (like admin)
+              // Regular profiles can only change to "Terminada"
+              // Non-profile non-admin: Terminada is restricted
               const isRestricted = isProfileRole
-                ? s !== 'Terminada'  // profile users can only select Terminada
-                : s === 'Terminada' && userRole !== 'admin';  // original logic
+                ? !isSupervisorProfile && s !== 'Terminada'  // regular profiles: only Terminada
+                : s === 'Terminada' && userRole !== 'admin';  // original logic for non-profiles
               return (
                 <button
                   key={s}
@@ -2360,8 +2367,8 @@ function ModalInner({
             })}
           </div>
 
-          {/* 8. Timestamps (Admin only) */}
-          {userRole === 'admin' && editingItem?.id && (
+          {/* 8. Timestamps (Admin & Supervisor only) */}
+          {(userRole === 'admin' || isSupervisorProfile) && editingItem?.id && (
             <div className="bg-slate-50 rounded-2xl p-4 space-y-2">
               <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
                 <CalendarDays size={10} /> Registro de Fechas y Horarios
@@ -4690,12 +4697,13 @@ function HamburgerMenu({
   if (!isOpen) return null;
 
   const isAdmin = userRole === 'admin';
+  const isSupervisorMenu = !!currentProfile && (currentProfile.permissions ?? []).includes('supervisor');
 
-  const menuItems: { view: AppView; label: string; emoji: string; adminOnly?: boolean }[] = [
+  const menuItems: { view: AppView; label: string; emoji: string; adminOnly?: boolean; supervisorCanSee?: boolean }[] = [
     { view: 'main', label: 'Planificación', emoji: '📋' },
     { view: 'calendar', label: 'Calendario', emoji: '📅' },
     { view: 'recurring', label: 'OTs Repetitivas', emoji: '🔄', adminOnly: true },
-    { view: 'dashboard', label: 'Dashboard', emoji: '📊', adminOnly: true },
+    { view: 'dashboard', label: 'Dashboard', emoji: '📊', adminOnly: true, supervisorCanSee: true },
     { view: 'admin', label: 'Administración', emoji: '⚙️', adminOnly: true },
   ];
 
@@ -4729,7 +4737,7 @@ function HamburgerMenu({
 
         {/* Menu Items */}
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto no-scrollbar">
-          {menuItems.filter(item => !item.adminOnly || isAdmin).map(item => (
+          {menuItems.filter(item => !item.adminOnly || isAdmin || (isSupervisorMenu && item.supervisorCanSee)).map(item => (
             <button
               key={item.view}
               onClick={() => handleNavigate(item.view)}
@@ -4882,7 +4890,7 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
                       <div className="text-sm">{profile.name}</div>
                       <div className="text-[9px] font-semibold opacity-80">
                         {profile.hasPassword ? 'Requiere clave de acceso' : (profile.permissions || ['view']).map(p => {
-                          const permOpt = [{ value: 'view', label: 'Ver' }, { value: 'create', label: 'Crear' }, { value: 'edit', label: 'Editar' }, { value: 'delete', label: 'Eliminar' }].find(o => o.value === p);
+                          const permOpt = [{ value: 'view', label: 'Ver' }, { value: 'supervisor', label: 'Supervisor' }, { value: 'create', label: 'Crear' }, { value: 'edit', label: 'Editar' }, { value: 'delete', label: 'Eliminar' }].find(o => o.value === p);
                           return permOpt ? permOpt.label : '';
                         }).filter(Boolean).join(' · ')}
                       </div>
@@ -5046,6 +5054,7 @@ export default function LagunaNorteApp() {
 
   // Permission helpers for profile users
   const profilePerms = currentProfile?.permissions ?? ['view'];
+  const isSupervisor = isProfileUser && profilePerms.includes('supervisor');
   const canCreate = !isProfileUser || profilePerms.includes('create');
   const canEdit = !isProfileUser || profilePerms.includes('edit');
   const canDelete = !isProfileUser || profilePerms.includes('delete');
@@ -5151,13 +5160,18 @@ export default function LagunaNorteApp() {
     return <ProfileLogin onLogin={(role) => setUserRole(role)} workAreas={workAreas} />;
   }
 
-  // Visible work orders: profile users can only see OTs from their assigned work areas
+  // Visible work orders: visibility depends on role
+  // Admin: sees everything
+  // Supervisor profile: sees everything (all statuses, all areas)
+  // Other profiles: only see "En Proceso" OTs from their assigned work areas
   const visibleWorkOrders = (() => {
     if (userRole === 'admin') return workOrders;
     if (isProfileUser && currentProfile) {
-      // Profile user: can only see OTs from their assigned work areas
+      // Supervisor profile: sees all OTs in all statuses
+      if (isSupervisor) return workOrders;
+      // Regular profile: only "En Proceso" OTs from their assigned work areas
       return workOrders.filter(ot => {
-        // Match OT to a work area
+        if (ot.status !== 'En Proceso') return false;
         for (const waId of currentProfile.workAreaIds) {
           const wa = workAreas.find(a => a.id === waId);
           if (wa && ot.activities.some(a => wa.activities.includes(a))) {
@@ -5180,10 +5194,12 @@ export default function LagunaNorteApp() {
     : visibleWorkOrders.filter(o => o.status === statusFilter);
 
   // Available filters based on role
-  const availableFilters: StatusFilter[] = (userRole === 'admin')
+  // Admin & Supervisor: all filters
+  // Regular profiles: only "Todas" and "En Proceso" (they can't see Pendiente/Terminada)
+  const availableFilters: StatusFilter[] = (userRole === 'admin' || isSupervisor)
     ? ['Todas', 'Pendiente', 'En Proceso', 'Terminada']
     : isProfileUser
-      ? ['Todas', 'Pendiente', 'En Proceso', 'Terminada']
+      ? ['Todas', 'En Proceso']
       : ['Todas', 'Pendiente', 'En Proceso'];
 
   return (
@@ -5218,13 +5234,15 @@ export default function LagunaNorteApp() {
         <main className="p-4 space-y-5 flex-1 pb-20">
           {/* ─── Stats Chips ─── */}
           <div className="flex gap-3">
-            <div className="flex-1 bg-red-50 border border-red-100 p-3 rounded-2xl flex items-center gap-2">
-              <Clock className="text-red-500 flex-shrink-0" size={16} />
-              <div>
-                <div className="text-xl font-black text-red-600 leading-none">{visiblePendientes}</div>
-                <div className="text-[8px] font-bold text-red-400 uppercase tracking-wider">Pendientes</div>
+            {(userRole === 'admin' || isSupervisor) && (
+              <div className="flex-1 bg-red-50 border border-red-100 p-3 rounded-2xl flex items-center gap-2">
+                <Clock className="text-red-500 flex-shrink-0" size={16} />
+                <div>
+                  <div className="text-xl font-black text-red-600 leading-none">{visiblePendientes}</div>
+                  <div className="text-[8px] font-bold text-red-400 uppercase tracking-wider">Pendientes</div>
+                </div>
               </div>
-            </div>
+            )}
             <div className="flex-1 bg-amber-50 border border-amber-100 p-3 rounded-2xl flex items-center gap-2">
               <Zap className="text-amber-500 flex-shrink-0" size={16} />
               <div>
@@ -5232,13 +5250,15 @@ export default function LagunaNorteApp() {
                 <div className="text-[8px] font-bold text-amber-400 uppercase tracking-wider">En Proceso</div>
               </div>
             </div>
-            <div className="flex-1 bg-emerald-50 border border-emerald-100 p-3 rounded-2xl flex items-center gap-2">
-              <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={16} />
-              <div>
-                <div className="text-xl font-black text-emerald-600 leading-none">{visibleTerminadas}</div>
-                <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider">Listas</div>
+            {(userRole === 'admin' || isSupervisor) && (
+              <div className="flex-1 bg-emerald-50 border border-emerald-100 p-3 rounded-2xl flex items-center gap-2">
+                <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={16} />
+                <div>
+                  <div className="text-xl font-black text-emerald-600 leading-none">{visibleTerminadas}</div>
+                  <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider">Listas</div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* ─── Quick Create Categories ─── */}
