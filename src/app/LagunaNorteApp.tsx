@@ -1384,14 +1384,17 @@ function AdminPanel({
   ];
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex justify-end">
-      <div className="bg-white w-full max-w-md h-full overflow-y-auto shadow-2xl no-scrollbar">
+    <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-white border-b border-slate-100 p-4 flex justify-between items-center">
-          <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-            <Settings size={18} /> Administración
-          </h2>
-          <button onClick={onClose} className="p-2 bg-slate-100 rounded-full"><X size={20} /></button>
+        <div className="bg-white border-b border-slate-100 p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+              <ChevronLeft size={18} className="text-slate-600" />
+            </button>
+            <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
+              <Settings size={18} /> Administración
+            </h2>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -1411,7 +1414,7 @@ function AdminPanel({
           ))}
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4 pb-32">
           {/* ─── Work Areas Tab ─── */}
           {activeTab === 'areas' && (
             <>
@@ -1904,7 +1907,6 @@ function AdminPanel({
             </div>
           )}
         </div>
-      </div>
     </div>
   );
 }
@@ -3001,28 +3003,31 @@ function AdminDashboard({
   ];
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex justify-end">
-      <div className="bg-white w-full max-w-md h-full overflow-y-auto shadow-2xl no-scrollbar">
+    <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-gradient-to-r from-blue-600 to-blue-700 p-4 flex justify-between items-center">
-          <h2 className="text-lg font-black text-white uppercase tracking-tighter flex items-center gap-2">
-            <BarChart3 size={18} /> Dashboard
-          </h2>
+        <div className="bg-white border-b border-slate-100 p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+              <ChevronLeft size={18} className="text-slate-600" />
+            </button>
+            <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
+              <BarChart3 size={18} /> Dashboard
+            </h2>
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={`p-2 rounded-full transition-colors ${showFilters ? 'bg-white/30' : 'bg-white/10 hover:bg-white/20'}`}
+              className={`p-2 rounded-xl transition-colors ${showFilters ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
               title="Filtros"
             >
-              <Filter size={16} className="text-white" />
+              <Filter size={16} />
             </button>
-            <button onClick={onClose} className="p-2 bg-white/20 rounded-full text-white"><X size={20} /></button>
           </div>
         </div>
 
         {/* Filter Bar */}
         {showFilters && (
-          <div className="bg-slate-50 border-b border-slate-200 p-3 space-y-2 sticky top-[60px] z-10">
+          <div className="bg-slate-50 border-b border-slate-200 p-3 space-y-2">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
                 <Filter size={10} /> Filtros de Datos
@@ -3111,7 +3116,7 @@ function AdminDashboard({
         )}
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-100 bg-white sticky top-[60px] z-10" style={{ top: showFilters ? undefined : '60px' }}>
+        <div className="flex border-b border-slate-100 bg-white">
           {tabs.map(tab => (
             <button
               key={tab.key}
@@ -3128,7 +3133,7 @@ function AdminDashboard({
           ))}
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-4 pb-32">
           {/* ─── Resumen Tab ─── */}
           {dashTab === 'resumen' && (
             <>
@@ -3533,7 +3538,6 @@ function AdminDashboard({
             </>
           )}
         </div>
-      </div>
     </div>
   );
 }
@@ -5072,7 +5076,7 @@ export default function LagunaNorteApp() {
       </header>
 
       {/* ─── Main OT List View ─── */}
-      {(currentView === 'main' || currentView === 'dashboard' || currentView === 'admin') && (
+      {currentView === 'main' && (
         <main className="p-4 space-y-5 flex-1 pb-20">
           {/* ─── Stats Chips ─── */}
           <div className="flex gap-3">
@@ -5305,30 +5309,34 @@ export default function LagunaNorteApp() {
         userRole={userRole}
       />
 
-      {/* ─── Admin Panel (side panel) ─── */}
-      <AdminPanel
-        isOpen={currentView === 'admin'}
-        onClose={() => setCurrentView('main')}
-        workAreas={workAreas}
-        personnel={personnel}
-        zones={zones}
-        onUpdateWorkAreas={updateWorkAreas}
-        onUpdatePersonnel={updatePersonnel}
-        onUpdateZones={updateZones}
-        profiles={profiles}
-        onCreateProfile={createProfile}
-        onUpdateProfile={updateProfile}
-        onDeleteProfile={deleteProfile}
-      />
+      {/* ─── Dashboard Full-Page View ─── */}
+      {currentView === 'dashboard' && (
+        <AdminDashboard
+          isOpen={true}
+          onClose={() => setCurrentView('main')}
+          workOrders={workOrders}
+          workAreas={workAreas}
+          personnel={personnel}
+        />
+      )}
 
-      {/* ─── Admin Dashboard (side panel) ─── */}
-      <AdminDashboard
-        isOpen={currentView === 'dashboard'}
-        onClose={() => setCurrentView('main')}
-        workOrders={workOrders}
-        workAreas={workAreas}
-        personnel={personnel}
-      />
+      {/* ─── Admin Full-Page View ─── */}
+      {currentView === 'admin' && (
+        <AdminPanel
+          isOpen={true}
+          onClose={() => setCurrentView('main')}
+          workAreas={workAreas}
+          personnel={personnel}
+          zones={zones}
+          onUpdateWorkAreas={updateWorkAreas}
+          onUpdatePersonnel={updatePersonnel}
+          onUpdateZones={updateZones}
+          profiles={profiles}
+          onCreateProfile={createProfile}
+          onUpdateProfile={updateProfile}
+          onDeleteProfile={deleteProfile}
+        />
+      )}
 
       {/* ─── Hamburger Menu ─── */}
       <HamburgerMenu
