@@ -5,6 +5,8 @@ function serializeProfile(row: {
   id: string;
   name: string;
   password: string;
+  color: string;
+  icon: string;
   workAreaIds: string[];
   createdAt: Date;
   updatedAt: Date;
@@ -12,6 +14,8 @@ function serializeProfile(row: {
   const result: Record<string, unknown> = {
     id: row.id,
     name: row.name,
+    color: row.color || '',
+    icon: row.icon || '',
     workAreaIds: Array.isArray(row.workAreaIds) ? row.workAreaIds : [],
     hasPassword: row.password !== '',
     createdAt: new Date(row.createdAt).getTime(),
@@ -36,6 +40,8 @@ export async function PUT(
 
     if (body.name !== undefined) data.name = body.name;
     if (body.password !== undefined) data.password = body.password;
+    if (body.color !== undefined) data.color = body.color;
+    if (body.icon !== undefined) data.icon = body.icon;
     if (body.workAreaIds !== undefined) data.workAreaIds = Array.isArray(body.workAreaIds) ? body.workAreaIds : [];
 
     const row = await db.profile.update({

@@ -7,7 +7,7 @@ import {
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
-  Repeat, Pause, Play, ChevronLeft, Menu, Users
+  Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -146,6 +146,8 @@ interface ProfileItem {
   name: string;
   hasPassword: boolean;
   password?: string;
+  color: string;
+  icon: string;
   workAreaIds: string[];
   createdAt: number;
   updatedAt: number;
@@ -1217,14 +1219,34 @@ function AdminPanel({
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfilePassword, setNewProfilePassword] = useState('');
   const [newProfileWorkAreaIds, setNewProfileWorkAreaIds] = useState<string[]>([]);
+  const [newProfileColor, setNewProfileColor] = useState('bg-red-500');
+  const [newProfileIcon, setNewProfileIcon] = useState('User');
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [editingProfileName, setEditingProfileName] = useState('');
   const [editingProfilePassword, setEditingProfilePassword] = useState('');
   const [editingProfileWorkAreaIds, setEditingProfileWorkAreaIds] = useState<string[]>([]);
+  const [editingProfileColor, setEditingProfileColor] = useState('bg-red-500');
+  const [editingProfileIcon, setEditingProfileIcon] = useState('User');
 
   const COLOR_OPTIONS = [
     'bg-green-600', 'bg-orange-500', 'bg-cyan-500', 'bg-purple-500', 'bg-yellow-500',
     'bg-red-500', 'bg-blue-500', 'bg-pink-500', 'bg-teal-500', 'bg-indigo-500',
+    'bg-emerald-600', 'bg-amber-500', 'bg-rose-500', 'bg-violet-500', 'bg-sky-500',
+  ];
+
+  const PROFILE_ICON_OPTIONS = [
+    { value: 'User', label: 'Usuario' },
+    { value: 'Shield', label: 'Escudo' },
+    { value: 'Wrench', label: 'Llave' },
+    { value: 'Leaf', label: 'Hoja' },
+    { value: 'Droplets', label: 'Gotas' },
+    { value: 'Zap', label: 'Rayo' },
+    { value: 'Brush', label: 'Escoba' },
+    { value: 'Trash2', label: 'Basura' },
+    { value: 'HardHat', label: 'Casco' },
+    { value: 'ClipboardList', label: 'Portapapeles' },
+    { value: 'Eye', label: 'Ojo' },
+    { value: 'Star', label: 'Estrella' },
   ];
 
   if (!isOpen) return null;
@@ -1325,15 +1347,17 @@ function AdminPanel({
   // Profile CRUD
   const handleAddProfile = async () => {
     if (!newProfileName.trim()) return;
-    await onCreateProfile({ name: newProfileName.trim(), password: newProfilePassword, workAreaIds: newProfileWorkAreaIds });
+    await onCreateProfile({ name: newProfileName.trim(), password: newProfilePassword, color: newProfileColor, icon: newProfileIcon, workAreaIds: newProfileWorkAreaIds });
     setNewProfileName('');
     setNewProfilePassword('');
     setNewProfileWorkAreaIds([]);
+    setNewProfileColor('bg-red-500');
+    setNewProfileIcon('User');
   };
 
   const handleSaveProfile = async () => {
     if (!editingProfileId || !editingProfileName.trim()) return;
-    const updateData: Record<string, unknown> = { name: editingProfileName.trim(), workAreaIds: editingProfileWorkAreaIds };
+    const updateData: Record<string, unknown> = { name: editingProfileName.trim(), workAreaIds: editingProfileWorkAreaIds, color: editingProfileColor, icon: editingProfileIcon };
     // Only send password if it was changed (non-empty)
     if (editingProfilePassword.trim()) {
       updateData.password = editingProfilePassword.trim();
@@ -1643,7 +1667,7 @@ function AdminPanel({
                   type="text"
                   value={newProfileName}
                   onChange={e => setNewProfileName(e.target.value)}
-                  placeholder="Nombre del cargo (ej: Jardinería, Aseo...)"
+                  placeholder="Nombre del cargo (ej: Supervisor, Jardinería...)"
                   className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
                 />
                 <input
@@ -1653,6 +1677,42 @@ function AdminPanel({
                   placeholder="Contraseña (opcional)"
                   className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
                 />
+                {/* Color selector */}
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Color del perfil</p>
+                  <div className="flex flex-wrap gap-2">
+                    {COLOR_OPTIONS.map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setNewProfileColor(c)}
+                        className={`w-8 h-8 rounded-xl ${c} transition-all ${
+                          newProfileColor === c ? 'ring-2 ring-offset-2 ring-slate-400 scale-110' : 'opacity-60 hover:opacity-100'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+                {/* Icon selector */}
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Icono del perfil</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PROFILE_ICON_OPTIONS.map(opt => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setNewProfileIcon(opt.value)}
+                        className={`px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase transition-all ${
+                          newProfileIcon === opt.value
+                            ? 'bg-slate-700 text-white shadow-md'
+                            : 'bg-white text-slate-400 border border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {/* Work area selector - checkboxes */}
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Áreas de trabajo que puede ver</p>
@@ -1705,6 +1765,42 @@ function AdminPanel({
                         placeholder={profile.hasPassword ? 'Dejar vacío para mantener actual' : 'Nueva contraseña (opcional)'}
                         className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 font-bold text-sm"
                       />
+                      {/* Color selector */}
+                      <div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Color del perfil</p>
+                        <div className="flex flex-wrap gap-2">
+                          {COLOR_OPTIONS.map(c => (
+                            <button
+                              key={c}
+                              type="button"
+                              onClick={() => setEditingProfileColor(c)}
+                              className={`w-8 h-8 rounded-xl ${c} transition-all ${
+                                editingProfileColor === c ? 'ring-2 ring-offset-2 ring-slate-400 scale-110' : 'opacity-60 hover:opacity-100'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      {/* Icon selector */}
+                      <div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Icono del perfil</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {PROFILE_ICON_OPTIONS.map(opt => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setEditingProfileIcon(opt.value)}
+                              className={`px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase transition-all ${
+                                editingProfileIcon === opt.value
+                                  ? 'bg-slate-700 text-white shadow-md'
+                                  : 'bg-slate-50 text-slate-400 border border-slate-100 hover:border-slate-300'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <div>
                         <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Áreas de trabajo que puede ver</p>
                         <div className="flex flex-wrap gap-2">
@@ -1749,6 +1845,7 @@ function AdminPanel({
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="flex items-center gap-2">
+                            <span className={`w-4 h-4 rounded-full ${profile.color || 'bg-slate-400'}`} />
                             <p className="font-black text-slate-800 text-sm uppercase">{profile.name}</p>
                             {profile.hasPassword && (
                               <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-amber-50 text-amber-500 rounded-full text-[7px] font-black uppercase">
@@ -1777,6 +1874,8 @@ function AdminPanel({
                               setEditingProfileName(profile.name);
                               setEditingProfilePassword('');
                               setEditingProfileWorkAreaIds([...profile.workAreaIds]);
+                              setEditingProfileColor(profile.color || 'bg-red-500');
+                              setEditingProfileIcon(profile.icon || 'User');
                             }}
                             className="p-2 bg-blue-50 text-blue-600 rounded-xl active:scale-95 transition-transform"
                           >
@@ -4537,19 +4636,40 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
   const [pendingProfile, setPendingProfile] = useState<ProfileItem | null>(null);
   const { profiles, loading: profilesLoading } = useProfiles();
 
-  // Map work area color classes to gradient + shadow + icon for profile buttons
-  const PROFILE_STYLE_MAP: Record<string, { gradient: string; shadow: string; icon: React.ElementType }> = {
-    'bg-green-600':  { gradient: 'from-green-600 to-green-700',  shadow: 'shadow-green-200', icon: Leaf },
-    'bg-pink-500':   { gradient: 'from-pink-500 to-pink-600',    shadow: 'shadow-pink-200',  icon: Brush },
-    'bg-orange-500': { gradient: 'from-orange-500 to-orange-600', shadow: 'shadow-orange-200', icon: Trash2 },
-    'bg-cyan-500':   { gradient: 'from-cyan-500 to-cyan-600',    shadow: 'shadow-cyan-200',  icon: Droplets },
-    'bg-purple-500': { gradient: 'from-purple-500 to-purple-600', shadow: 'shadow-purple-200', icon: Wrench },
-    'bg-yellow-500': { gradient: 'from-yellow-500 to-yellow-600', shadow: 'shadow-yellow-200', icon: Zap },
+  // Map color classes to gradient + shadow for profile buttons
+  const PROFILE_STYLE_MAP: Record<string, { gradient: string; shadow: string }> = {
+    'bg-green-600':  { gradient: 'from-green-600 to-green-700',  shadow: 'shadow-green-200' },
+    'bg-pink-500':   { gradient: 'from-pink-500 to-pink-600',    shadow: 'shadow-pink-200' },
+    'bg-orange-500': { gradient: 'from-orange-500 to-orange-600', shadow: 'shadow-orange-200' },
+    'bg-cyan-500':   { gradient: 'from-cyan-500 to-cyan-600',    shadow: 'shadow-cyan-200' },
+    'bg-purple-500': { gradient: 'from-purple-500 to-purple-600', shadow: 'shadow-purple-200' },
+    'bg-yellow-500': { gradient: 'from-yellow-500 to-yellow-600', shadow: 'shadow-yellow-200' },
+    'bg-red-500':    { gradient: 'from-red-500 to-red-600',      shadow: 'shadow-red-200' },
+    'bg-blue-500':   { gradient: 'from-blue-500 to-blue-600',    shadow: 'shadow-blue-200' },
+    'bg-teal-500':   { gradient: 'from-teal-500 to-teal-600',    shadow: 'shadow-teal-200' },
+    'bg-indigo-500': { gradient: 'from-indigo-500 to-indigo-600', shadow: 'shadow-indigo-200' },
+    'bg-emerald-600': { gradient: 'from-emerald-600 to-emerald-700', shadow: 'shadow-emerald-200' },
+    'bg-amber-500':  { gradient: 'from-amber-500 to-amber-600',  shadow: 'shadow-amber-200' },
+    'bg-rose-500':   { gradient: 'from-rose-500 to-rose-600',    shadow: 'shadow-rose-200' },
+    'bg-violet-500': { gradient: 'from-violet-500 to-violet-600', shadow: 'shadow-violet-200' },
+    'bg-sky-500':    { gradient: 'from-sky-500 to-sky-600',      shadow: 'shadow-sky-200' },
   };
-  const DEFAULT_PROFILE_STYLE = { gradient: 'from-slate-500 to-slate-600', shadow: 'shadow-slate-200', icon: User };
+  const DEFAULT_PROFILE_STYLE = { gradient: 'from-slate-500 to-slate-600', shadow: 'shadow-slate-200' };
 
-  // Resolve the primary work area for a profile (first one with a known style)
+  // Icon name → component mapping
+  const ICON_MAP: Record<string, React.ElementType> = {
+    User: User, Shield: Shield, Wrench: Wrench, Leaf: Leaf,
+    Droplets: Droplets, Zap: Zap, Brush: Brush, Trash2: Trash2,
+    HardHat: HardHat, ClipboardList: ClipboardList, Eye: Eye, Star: Star,
+  };
+
+  // Resolve profile style: use profile's own color first, then fall back to first work area color
   const getProfileStyle = (profile: ProfileItem) => {
+    // If profile has its own color, use it
+    if (profile.color && PROFILE_STYLE_MAP[profile.color]) {
+      return PROFILE_STYLE_MAP[profile.color];
+    }
+    // Fall back to first assigned work area's color
     for (const waId of profile.workAreaIds) {
       const wa = workAreas.find(a => a.id === waId);
       if (wa && PROFILE_STYLE_MAP[wa.color]) {
@@ -4557,6 +4677,23 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
       }
     }
     return DEFAULT_PROFILE_STYLE;
+  };
+
+  // Resolve profile icon: use profile's own icon first, then fall back to work area icon
+  const getProfileIcon = (profile: ProfileItem): React.ElementType => {
+    if (profile.icon && ICON_MAP[profile.icon]) {
+      return ICON_MAP[profile.icon];
+    }
+    // Fall back to icon from first work area
+    const waId = profile.workAreaIds[0];
+    if (waId) {
+      const wa = workAreas.find(a => a.id === waId);
+      if (wa) {
+        const cat = CATEGORIES.find(c => c.workAreaId === wa.id);
+        if (cat?.icon && ICON_MAP[cat.icon]) return ICON_MAP[cat.icon];
+      }
+    }
+    return User;
   };
 
   return (
@@ -4592,7 +4729,7 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
               <p className="text-center text-[9px] font-black text-slate-400 uppercase tracking-wider">Perfiles por Cargo</p>
               {profiles.map(profile => {
                 const style = getProfileStyle(profile);
-                const ProfileIcon = style.icon;
+                const ProfileIcon = getProfileIcon(profile);
                 const handleProfileClick = () => {
                   if (profile.hasPassword) {
                     setPendingProfile(profile);
