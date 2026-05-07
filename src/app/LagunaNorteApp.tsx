@@ -7,7 +7,8 @@ import {
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, ShieldCheck, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
-  Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound, ScrollText
+  Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound, ScrollText,
+  QrCode, Scan, MapPinned
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -153,6 +154,36 @@ interface ProfileItem {
   permissions: string[];
   createdAt: number;
   updatedAt: number;
+}
+
+interface QrLocationItem {
+  id: string;
+  name: string;
+  description: string;
+  location: string;
+  code: string;
+  active: boolean;
+  createdBy: string;
+  scanCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface QrScanItem {
+  id: string;
+  qrLocationId: string;
+  scannedBy: string;
+  profileId: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  notes: string;
+  createdAt: number;
+  location: {
+    id: string;
+    name: string;
+    location: string;
+    code: string;
+  } | null;
 }
 
 /* ─── Migration helper (backward compat) ─── */
@@ -816,6 +847,131 @@ function useProfiles(performedBy?: string, profileId?: string) {
   }, [fetchProfiles]);
 
   return { profiles, loading, createProfile, updateProfile, deleteProfile, refetch: fetchProfiles };
+}
+
+/* ─── Custom Hook: useQrLocations ─── */
+
+function useQrLocations(performedBy?: string, profileId?: string) {
+  const [locations, setLocations] = useState<QrLocationItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchLocations = useCallback(async () => {
+    try {
+      const res = await fetch('/api/qr-locations');
+      if (!res.ok) throw new Error('API not available');
+      const data = await res.json();
+      setLocations(Array.isArray(data) ? data : []);
+    } catch {
+      setLocations([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLocations();
+  }, [fetchLocations]);
+
+  const createLocation = useCallback(async (data: Partial<QrLocationItem>): Promise<QrLocationItem | null> => {
+    try {
+      const res = await fetch('/api/qr-locations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        await fetchLocations();
+        return created;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [fetchLocations, performedBy, profileId]);
+
+  const updateLocation = useCallback(async (id: string, data: Partial<QrLocationItem>): Promise<QrLocationItem | null> => {
+    try {
+      const res = await fetch(`/api/qr-locations/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        await fetchLocations();
+        return updated;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [fetchLocations, performedBy, profileId]);
+
+  const deleteLocation = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/qr-locations/${id}?_performedBy=${encodeURIComponent(performedBy || 'admin')}&_profileId=${profileId || ''}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchLocations();
+        return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  }, [fetchLocations, performedBy, profileId]);
+
+  return { locations, loading, createLocation, updateLocation, deleteLocation, refetch: fetchLocations };
+}
+
+/* ─── Custom Hook: useQrScans ─── */
+
+function useQrScans() {
+  const [scans, setScans] = useState<QrScanItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+
+  const fetchScans = useCallback(async (filters?: { qrLocationId?: string; scannedBy?: string; from?: number; to?: number; limit?: number; offset?: number }) => {
+    try {
+      const params = new URLSearchParams();
+      if (filters?.qrLocationId) params.set('qrLocationId', filters.qrLocationId);
+      if (filters?.scannedBy) params.set('scannedBy', filters.scannedBy);
+      if (filters?.from) params.set('from', String(filters.from));
+      if (filters?.to) params.set('to', String(filters.to));
+      if (filters?.limit) params.set('limit', String(filters.limit));
+      if (filters?.offset) params.set('offset', String(filters.offset));
+
+      const res = await fetch(`/api/qr-scans?${params.toString()}`);
+      if (!res.ok) throw new Error('API not available');
+      const data = await res.json();
+      setScans(Array.isArray(data.scans) ? data.scans : []);
+      setTotal(data.total || 0);
+    } catch {
+      setScans([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchScans();
+  }, [fetchScans]);
+
+  const createScan = useCallback(async (data: { code: string; scannedBy: string; profileId?: string; latitude?: number; longitude?: number; notes?: string }): Promise<QrScanItem | null> => {
+    try {
+      const res = await fetch('/api/qr-scans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        await fetchScans();
+        return created;
+      } else {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Error al escanear');
+      }
+    } catch (error: any) {
+      throw error;
+    }
+  }, [fetchScans]);
+
+  return { scans, loading, total, createScan, refetch: fetchScans };
 }
 
 /* ─── Custom Hook: useConfigData ─── */
@@ -5327,9 +5483,673 @@ function AuditLogView({
   );
 }
 
+/* ─── Guardias Panel (Admin) ─── */
+
+function GuardiasPanel({
+  onBack,
+  performedBy,
+  profileId,
+  currentProfile,
+  userRole,
+  onScan,
+}: {
+  onBack: () => void;
+  performedBy: string;
+  profileId: string | undefined;
+  currentProfile: ProfileItem | null;
+  userRole: UserRole;
+  onScan?: () => void;
+}) {
+  const { locations, loading: locLoading, createLocation, updateLocation, deleteLocation, refetch: refetchLocations } = useQrLocations(performedBy, profileId);
+  const { scans, loading: scansLoading, total: scansTotal, refetch: refetchScans } = useQrScans();
+  const [tab, setTab] = useState<'locations' | 'scans'>('locations');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingLocation, setEditingLocation] = useState<QrLocationItem | null>(null);
+  const [qrImageMap, setQrImageMap] = useState<Record<string, string>>({});
+  const [showQrModal, setShowQrModal] = useState<QrLocationItem | null>(null);
+  const [scanFilter, setScanFilter] = useState<string>('all'); // all or location id
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  // Form state
+  const [formName, setFormName] = useState('');
+  const [formDescription, setFormDescription] = useState('');
+  const [formLocation, setFormLocation] = useState('');
+  const [formCode, setFormCode] = useState('');
+
+  // Load QR images for all locations
+  useEffect(() => {
+    locations.forEach(async (loc) => {
+      if (!qrImageMap[loc.code]) {
+        try {
+          const res = await fetch(`/api/qr-generate?code=${encodeURIComponent(loc.code)}&size=512`);
+          if (res.ok) {
+            const data = await res.json();
+            setQrImageMap(prev => ({ ...prev, [loc.code]: data.dataUrl }));
+          }
+        } catch { /* ignore */ }
+      }
+    });
+  }, [locations]);
+
+  // Also load QR preview for form code
+  useEffect(() => {
+    if (formCode.trim() && !qrImageMap[formCode.trim()]) {
+      fetch(`/api/qr-generate?code=${encodeURIComponent(formCode.trim())}&size=512`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data?.dataUrl) {
+            setQrImageMap(prev => ({ ...prev, [formCode.trim()]: data.dataUrl }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [formCode]);
+
+  const resetForm = () => {
+    setFormName('');
+    setFormDescription('');
+    setFormLocation('');
+    setFormCode('');
+    setEditingLocation(null);
+    setShowCreateModal(false);
+  };
+
+  const handleSave = async () => {
+    if (!formName.trim() || !formCode.trim()) return;
+    if (editingLocation) {
+      await updateLocation(editingLocation.id, {
+        name: formName,
+        description: formDescription,
+        location: formLocation,
+        code: formCode,
+      } as any);
+    } else {
+      await createLocation({
+        name: formName,
+        description: formDescription,
+        location: formLocation,
+        code: formCode,
+      } as any);
+    }
+    resetForm();
+  };
+
+  const handleEdit = (loc: QrLocationItem) => {
+    setFormName(loc.name);
+    setFormDescription(loc.description);
+    setFormLocation(loc.location);
+    setFormCode(loc.code);
+    setEditingLocation(loc);
+    setShowCreateModal(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (confirm('¿Eliminar esta ubicación QR y todos sus escaneos?')) {
+      await deleteLocation(id);
+    }
+  };
+
+  const handleToggleActive = async (loc: QrLocationItem) => {
+    await updateLocation(loc.id, { active: !loc.active } as any);
+  };
+
+  const handleApplyFilters = () => {
+    const filters: any = {};
+    if (scanFilter !== 'all') filters.qrLocationId = scanFilter;
+    if (dateFrom) filters.from = new Date(dateFrom).getTime();
+    if (dateTo) filters.to = new Date(dateTo + 'T23:59:59').getTime();
+    refetchScans(filters);
+  };
+
+  const isAdmin = userRole === 'admin';
+  const isGuardia = currentProfile?.permissions?.includes('guardia');
+
+  // Filter scans for guardia profile - only their own scans
+  const visibleScans = isGuardia && !isAdmin
+    ? scans.filter(s => s.profileId === currentProfile?.id || s.scannedBy === currentProfile?.name)
+    : scans;
+
+  return (
+    <div className="flex-1 flex flex-col">
+      {/* Header */}
+      <div className="sticky top-0 z-30 bg-white border-b border-slate-100 p-4 flex items-center gap-3">
+        <button onClick={onBack} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+          <ChevronLeft size={20} className="text-slate-600" />
+        </button>
+        <div className="flex-1">
+          <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Guardias</h2>
+          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Control de rondas y ubicaciones</p>
+        </div>
+        {isGuardia && onScan && (
+          <button
+            onClick={onScan}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform"
+          >
+            <Scan size={14} /> Escanear QR
+          </button>
+        )}
+        {isAdmin && (
+          <button
+            onClick={() => { resetForm(); setShowCreateModal(true); }}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform"
+          >
+            <Plus size={14} /> Nueva Ubicación
+          </button>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-slate-100 p-1 m-4 rounded-2xl">
+        <button
+          onClick={() => setTab('locations')}
+          className={`flex-1 py-2 px-1 rounded-xl text-[9px] font-black uppercase transition-all ${tab === 'locations' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+        >
+          <QrCode size={12} className="inline mr-1" /> Ubicaciones ({locations.length})
+        </button>
+        <button
+          onClick={() => setTab('scans')}
+          className={`flex-1 py-2 px-1 rounded-xl text-[9px] font-black uppercase transition-all ${tab === 'scans' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+        >
+          <Scan size={12} className="inline mr-1" /> Escaneos ({scansTotal})
+        </button>
+      </div>
+
+      {/* Locations Tab */}
+      {tab === 'locations' && (
+        <div className="px-4 pb-20 space-y-3">
+          {locLoading ? (
+            <div className="text-center py-12">
+              <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+              <p className="text-slate-400 text-sm font-bold">Cargando ubicaciones...</p>
+            </div>
+          ) : locations.length === 0 ? (
+            <div className="text-center py-12">
+              <QrCode className="mx-auto text-slate-200 mb-3" size={40} />
+              <p className="text-slate-300 text-xs font-bold uppercase">No hay ubicaciones QR</p>
+              <p className="text-slate-300 text-[10px] mt-1">Crea ubicaciones para generar códigos QR</p>
+            </div>
+          ) : (
+            locations.map(loc => (
+              <div key={loc.id} className={`bg-white rounded-2xl border ${loc.active ? 'border-slate-100' : 'border-red-100 bg-red-50/30'} p-4 shadow-sm`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-black text-slate-800 uppercase">{loc.name}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[7px] font-black uppercase ${loc.active ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+                        {loc.active ? 'Activa' : 'Inactiva'}
+                      </span>
+                    </div>
+                    {loc.location && (
+                      <p className="text-[10px] text-blue-500 font-bold flex items-center gap-1">
+                        <MapPinned size={10} /> {loc.location}
+                      </p>
+                    )}
+                    {loc.description && (
+                      <p className="text-[10px] text-slate-400 font-medium mt-1">{loc.description}</p>
+                    )}
+                    <div className="flex items-center gap-3 mt-2">
+                      <span className="text-[8px] font-black bg-slate-100 px-2 py-0.5 rounded-full text-slate-500">{loc.code}</span>
+                      <span className="text-[8px] font-bold text-slate-400 flex items-center gap-0.5">
+                        <Scan size={8} /> {loc.scanCount} escaneos
+                      </span>
+                    </div>
+                  </div>
+                  {/* QR thumbnail */}
+                  {qrImageMap[loc.code] && (
+                    <button
+                      onClick={() => setShowQrModal(loc)}
+                      className="flex-shrink-0 w-16 h-16 rounded-xl border border-slate-100 overflow-hidden hover:shadow-md transition-shadow active:scale-95"
+                    >
+                      <img src={qrImageMap[loc.code]} alt="QR" className="w-full h-full object-contain" />
+                    </button>
+                  )}
+                </div>
+                {isAdmin && (
+                  <div className="flex gap-2 mt-3 pt-3 border-t border-slate-50">
+                    <button onClick={() => handleEdit(loc)} className="flex-1 py-2 bg-slate-50 text-slate-600 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1 hover:bg-slate-100 transition-colors active:scale-95">
+                      <Pencil size={10} /> Editar
+                    </button>
+                    <button onClick={() => handleToggleActive(loc)} className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1 transition-colors active:scale-95 ${loc.active ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}`}>
+                      {loc.active ? <><Pause size={10} /> Desactivar</> : <><Play size={10} /> Activar</>}
+                    </button>
+                    <button onClick={() => handleDelete(loc.id)} className="flex-1 py-2 bg-red-50 text-red-500 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1 hover:bg-red-100 transition-colors active:scale-95">
+                      <Trash2 size={10} /> Eliminar
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Scans Tab */}
+      {tab === 'scans' && (
+        <div className="px-4 pb-20 space-y-3">
+          {/* Filters */}
+          <div className="bg-white rounded-2xl border border-slate-100 p-3 space-y-2">
+            <div className="flex gap-2">
+              <select
+                value={scanFilter}
+                onChange={e => setScanFilter(e.target.value)}
+                className="flex-1 p-2 rounded-xl bg-slate-50 text-xs font-bold text-slate-700 border-none"
+              >
+                <option value="all">Todas las ubicaciones</option>
+                {locations.map(loc => (
+                  <option key={loc.id} value={loc.id}>{loc.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleApplyFilters}
+                className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform"
+              >
+                Filtrar
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={e => setDateFrom(e.target.value)}
+                className="flex-1 p-2 rounded-xl bg-slate-50 text-xs font-bold text-slate-700 border-none"
+                placeholder="Desde"
+              />
+              <input
+                type="date"
+                value={dateTo}
+                onChange={e => setDateTo(e.target.value)}
+                className="flex-1 p-2 rounded-xl bg-slate-50 text-xs font-bold text-slate-700 border-none"
+                placeholder="Hasta"
+              />
+            </div>
+          </div>
+
+          {scansLoading ? (
+            <div className="text-center py-12">
+              <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+              <p className="text-slate-400 text-sm font-bold">Cargando escaneos...</p>
+            </div>
+          ) : visibleScans.length === 0 ? (
+            <div className="text-center py-12">
+              <Scan className="mx-auto text-slate-200 mb-3" size={40} />
+              <p className="text-slate-300 text-xs font-bold uppercase">No hay escaneos registrados</p>
+            </div>
+          ) : (
+            visibleScans.map(scan => (
+              <div key={scan.id} className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-black text-slate-800">{scan.location?.name ?? 'Ubicación eliminada'}</span>
+                      <span className="text-[7px] font-black bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full">{scan.location?.code}</span>
+                    </div>
+                    {scan.location?.location && (
+                      <p className="text-[10px] text-blue-500 font-bold flex items-center gap-1">
+                        <MapPinned size={10} /> {scan.location.location}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-3 mt-2">
+                      {scan.scannedBy && (
+                        <span className="text-[9px] font-bold text-purple-500 flex items-center gap-1">
+                          <ShieldCheck size={9} /> {scan.scannedBy}
+                        </span>
+                      )}
+                      <span className="text-[9px] font-bold text-slate-400 flex items-center gap-1">
+                        <Clock size={9} /> {formatDateTime(scan.createdAt)}
+                      </span>
+                    </div>
+                    {(scan.latitude != null && scan.longitude != null) && (
+                      <span className="text-[8px] text-emerald-500 font-bold mt-1 inline-block">
+                        GPS: {scan.latitude.toFixed(6)}, {scan.longitude.toFixed(6)}
+                      </span>
+                    )}
+                    {scan.notes && (
+                      <p className="text-[10px] text-slate-400 font-medium mt-1">Nota: {scan.notes}</p>
+                    )}
+                  </div>
+                  <div className="flex-shrink-0 w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+                    <Scan size={18} className="text-emerald-500" />
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Create/Edit Location Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-[90] bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center" onClick={resetForm}>
+          <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-black text-slate-800 uppercase mb-4">
+              {editingLocation ? 'Editar Ubicación' : 'Nueva Ubicación QR'}
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Nombre *</label>
+                <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Ej: Portería Principal" className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Código QR *</label>
+                <input value={formCode} onChange={e => setFormCode(e.target.value.toUpperCase())} placeholder="Ej: QR-PORTERIA-01" className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm uppercase" />
+                <p className="text-[9px] text-slate-400 mt-1 ml-1">Este código se codificará en el QR. Debe ser único.</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Ubicación / Sector</label>
+                <input value={formLocation} onChange={e => setFormLocation(e.target.value)} placeholder="Ej: Entrada Norte - Sector A" className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Descripción</label>
+                <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} placeholder="Detalles adicionales..." rows={2} className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm resize-none" />
+              </div>
+              {formCode.trim() && (
+                <div className="text-center">
+                  <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Vista previa del QR</p>
+                  <div className="inline-block p-3 bg-white rounded-2xl border border-slate-100 shadow-lg">
+                    {qrImageMap[formCode.trim()] ? (
+                      <img src={qrImageMap[formCode.trim()]} alt="QR Preview" className="w-40 h-40" />
+                    ) : (
+                      <div className="w-40 h-40 flex items-center justify-center text-slate-300">
+                        <QrCode size={40} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <button onClick={resetForm} className="flex-1 py-3 bg-slate-100 text-slate-500 rounded-2xl text-xs font-bold uppercase">Cancelar</button>
+                <button onClick={handleSave} disabled={!formName.trim() || !formCode.trim()} className="flex-1 py-3 bg-blue-600 text-white rounded-2xl text-xs font-black uppercase active:scale-95 transition-transform disabled:opacity-50">
+                  {editingLocation ? 'Guardar' : 'Crear'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Full View Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-[90] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center" onClick={() => setShowQrModal(null)}>
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full mx-4" onClick={e => e.stopPropagation()}>
+            <div className="text-center mb-4">
+              <h3 className="text-lg font-black text-slate-800 uppercase">{showQrModal.name}</h3>
+              <p className="text-xs text-blue-500 font-bold flex items-center justify-center gap-1">
+                <MapPinned size={12} /> {showQrModal.location || 'Sin ubicación'}
+              </p>
+              <p className="text-[9px] text-slate-400 font-bold mt-1">{showQrModal.code}</p>
+            </div>
+            <div className="flex justify-center mb-4">
+              {qrImageMap[showQrModal.code] ? (
+                <img src={qrImageMap[showQrModal.code]} alt="QR Code" className="w-64 h-64" />
+              ) : (
+                <div className="w-64 h-64 flex items-center justify-center text-slate-300">
+                  <QrCode size={60} />
+                </div>
+              )}
+            </div>
+            <p className="text-[9px] text-slate-400 text-center font-medium">Imprime este QR y colócalo en la ubicación</p>
+            <button onClick={() => setShowQrModal(null)} className="w-full mt-4 py-3 bg-slate-100 text-slate-600 rounded-2xl text-xs font-bold uppercase">Cerrar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── QR Scanner View (Guardia) ─── */
+
+function QrScannerView({
+  onBack,
+  profileName,
+  profileId,
+}: {
+  onBack: () => void;
+  profileName: string;
+  profileId: string;
+}) {
+  const [scanning, setScanning] = useState(false);
+  const [lastScan, setLastScan] = useState<QrScanItem | null>(null);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [notes, setNotes] = useState('');
+  const [manualCode, setManualCode] = useState('');
+  const [myScans, setMyScans] = useState<QrScanItem[]>([]);
+  const [scannerInstance, setScannerInstance] = useState<any>(null);
+
+  // Load my recent scans
+  useEffect(() => {
+    const fetchMyScans = async () => {
+      try {
+        const res = await fetch(`/api/qr-scans?scannedBy=${encodeURIComponent(profileName)}&limit=20`);
+        if (res.ok) {
+          const data = await res.json();
+          setMyScans(Array.isArray(data.scans) ? data.scans : []);
+        }
+      } catch { /* ignore */ }
+    };
+    fetchMyScans();
+    const interval = setInterval(fetchMyScans, 10000);
+    return () => clearInterval(interval);
+  }, [profileName]);
+
+  const handleScan = useCallback(async (code: string) => {
+    setError('');
+    setSuccess('');
+    try {
+      // Try to get GPS position
+      let lat: number | undefined, lng: number | undefined;
+      try {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000, enableHighAccuracy: true });
+        });
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
+      } catch { /* GPS not available, that's ok */ }
+
+      const result = await fetch('/api/qr-scans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          scannedBy: profileName,
+          profileId,
+          latitude: lat,
+          longitude: lng,
+          notes: notes.trim() || undefined,
+        }),
+      });
+      if (!result.ok) {
+        const errData = await result.json();
+        throw new Error(errData.error || 'Error al registrar escaneo');
+      }
+      const scanData = await result.json();
+      setLastScan(scanData);
+      setSuccess(`Ubicación registrada: ${scanData?.location?.name ?? code}`);
+      setNotes('');
+
+      // Refresh my scans
+      try {
+        const res = await fetch(`/api/qr-scans?scannedBy=${encodeURIComponent(profileName)}&limit=20`);
+        if (res.ok) {
+          const data = await res.json();
+          setMyScans(Array.isArray(data.scans) ? data.scans : []);
+        }
+      } catch { /* ignore */ }
+    } catch (err: any) {
+      setError(err.message || 'Error al registrar escaneo');
+    }
+  }, [profileName, profileId, notes]);
+
+  const startScanner = useCallback(async () => {
+    setScanning(true);
+    setError('');
+    try {
+      const { Html5Qrcode } = await import('html5-qrcode');
+      const scanner = new Html5Qrcode('qr-reader');
+      setScannerInstance(scanner);
+      await scanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        async (decodedText: string) => {
+          // Stop scanner after successful scan
+          try { await scanner.stop(); } catch { /* ignore */ }
+          setScanning(false);
+          setScannerInstance(null);
+          await handleScan(decodedText);
+        },
+        () => { /* ignore scan errors (no QR found yet) */ }
+      );
+    } catch (err: any) {
+      console.error('Scanner error:', err);
+      setError('No se pudo iniciar la cámara. Intenta escanear manualmente.');
+      setScanning(false);
+    }
+  }, [handleScan]);
+
+  const stopScanner = useCallback(async () => {
+    if (scannerInstance) {
+      try { await scannerInstance.stop(); } catch { /* ignore */ }
+      setScannerInstance(null);
+    }
+    setScanning(false);
+  }, [scannerInstance]);
+
+  const handleManualScan = () => {
+    if (manualCode.trim()) {
+      handleScan(manualCode.trim());
+      setManualCode('');
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (scannerInstance) {
+        try { scannerInstance.stop(); } catch { /* ignore */ }
+      }
+    };
+  }, [scannerInstance]);
+
+  return (
+    <div className="flex-1 flex flex-col">
+      {/* Header */}
+      <div className="sticky top-0 z-30 bg-white border-b border-slate-100 p-4 flex items-center gap-3">
+        <button onClick={() => { stopScanner(); onBack(); }} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+          <ChevronLeft size={20} className="text-slate-600" />
+        </button>
+        <div className="flex-1">
+          <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Escanear QR</h2>
+          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{profileName}</p>
+        </div>
+      </div>
+
+      <div className="p-4 space-y-4 pb-20">
+        {/* Success/Error Messages */}
+        {success && (
+          <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl flex items-center gap-3">
+            <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={20} />
+            <div>
+              <p className="text-xs font-black text-emerald-700 uppercase">{success}</p>
+              {lastScan?.location?.location && (
+                <p className="text-[10px] text-emerald-500 font-bold flex items-center gap-1 mt-1">
+                  <MapPinned size={10} /> {lastScan.location.location}
+                </p>
+              )}
+              <p className="text-[10px] text-emerald-400 font-medium mt-1">
+                {lastScan && formatDateTime(lastScan.createdAt)}
+              </p>
+            </div>
+          </div>
+        )}
+        {error && (
+          <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center gap-3">
+            <X className="text-red-500 flex-shrink-0" size={20} />
+            <p className="text-xs font-bold text-red-600">{error}</p>
+          </div>
+        )}
+
+        {/* Scanner Area */}
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+          <div id="qr-reader" className="w-full" style={{ minHeight: scanning ? '300px' : '0' }}></div>
+          {!scanning && (
+            <div className="p-8 text-center">
+              <QrCode className="mx-auto text-slate-200 mb-3" size={60} />
+              <p className="text-slate-400 text-xs font-bold">Presiona el botón para escanear</p>
+            </div>
+          )}
+        </div>
+
+        {/* Notes */}
+        <div>
+          <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Notas (opcional)</label>
+          <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ej: Todo normal, sin novedades" className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm" />
+        </div>
+
+        {/* Scan Button */}
+        <button
+          onClick={scanning ? stopScanner : startScanner}
+          className={`w-full py-4 rounded-2xl font-black uppercase text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg ${
+            scanning
+              ? 'bg-red-500 text-white shadow-red-200'
+              : 'bg-blue-600 text-white shadow-blue-200'
+          }`}
+        >
+          {scanning ? (
+            <><X size={18} /> Detener Escáner</>
+          ) : (
+            <><Scan size={18} /> Escanear QR</>
+          )}
+        </button>
+
+        {/* Manual Code Entry */}
+        <div className="bg-slate-50 rounded-2xl p-4">
+          <p className="text-[10px] font-black text-slate-400 uppercase mb-2">O ingresa el código manualmente</p>
+          <div className="flex gap-2">
+            <input
+              value={manualCode}
+              onChange={e => setManualCode(e.target.value.toUpperCase())}
+              placeholder="Ej: QR-PORTERIA-01"
+              className="flex-1 p-3 rounded-xl bg-white border-none font-bold text-xs uppercase"
+              onKeyDown={e => e.key === 'Enter' && handleManualScan()}
+            />
+            <button
+              onClick={handleManualScan}
+              disabled={!manualCode.trim()}
+              className="px-4 py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform disabled:opacity-50"
+            >
+              Registrar
+            </button>
+          </div>
+        </div>
+
+        {/* My Recent Scans */}
+        {myScans.length > 0 && (
+          <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Mis últimos escaneos</p>
+            <div className="space-y-2">
+              {myScans.slice(0, 5).map(scan => (
+                <div key={scan.id} className="bg-white rounded-2xl border border-slate-100 p-3 flex items-center gap-3">
+                  <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 size={14} className="text-emerald-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-black text-slate-800 truncate">{scan.location?.name ?? 'Desconocida'}</p>
+                    <p className="text-[9px] text-slate-400 font-bold">{formatDateTime(scan.createdAt)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── View Type ─── */
 
-type AppView = 'main' | 'calendar' | 'recurring' | 'dashboard' | 'admin' | 'auditoria';
+type AppView = 'main' | 'calendar' | 'recurring' | 'dashboard' | 'admin' | 'auditoria' | 'guardias' | 'scanner';
 
 /* ─── Hamburger Menu ─── */
 
@@ -5354,12 +6174,14 @@ function HamburgerMenu({
 
   const isAdmin = userRole === 'admin';
   const isSupervisorMenu = !!currentProfile && (currentProfile.permissions ?? []).includes('supervisor');
+  const isGuardiaMenu = !!currentProfile && (currentProfile.permissions ?? []).includes('guardia');
 
-  const menuItems: { view: AppView; label: string; emoji: string; adminOnly?: boolean; supervisorCanSee?: boolean }[] = [
+  const menuItems: { view: AppView; label: string; emoji: string; adminOnly?: boolean; supervisorCanSee?: boolean; guardiaCanSee?: boolean }[] = [
     { view: 'main', label: 'Planificación', emoji: '📋' },
     { view: 'calendar', label: 'Calendario', emoji: '📅' },
     { view: 'recurring', label: 'OTs Repetitivas', emoji: '🔄', adminOnly: true },
     { view: 'dashboard', label: 'Dashboard', emoji: '📊', adminOnly: true, supervisorCanSee: true },
+    { view: 'guardias', label: 'Guardias', emoji: '🔒', adminOnly: true, guardiaCanSee: true },
     { view: 'admin', label: 'Administración', emoji: '⚙️', adminOnly: true },
     { view: 'auditoria', label: 'Historial', emoji: '📜', adminOnly: true },
   ];
@@ -5394,7 +6216,7 @@ function HamburgerMenu({
 
         {/* Menu Items */}
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto no-scrollbar">
-          {menuItems.filter(item => !item.adminOnly || isAdmin || (isSupervisorMenu && item.supervisorCanSee)).map(item => (
+          {menuItems.filter(item => !item.adminOnly || isAdmin || (isSupervisorMenu && item.supervisorCanSee) || (isGuardiaMenu && item.guardiaCanSee)).map(item => (
             <button
               key={item.view}
               onClick={() => handleNavigate(item.view)}
@@ -5855,6 +6677,7 @@ export default function LagunaNorteApp() {
   // Permission helpers for profile users
   const profilePerms = currentProfile?.permissions ?? ['view'];
   const isSupervisor = isProfileUser && profilePerms.includes('supervisor');
+  const isGuardia = isProfileUser && profilePerms.includes('guardia');
   const canCreate = !isProfileUser || profilePerms.includes('create');
   const canEdit = !isProfileUser || profilePerms.includes('edit');
   const canDelete = !isProfileUser || profilePerms.includes('delete');
@@ -6301,6 +7124,27 @@ export default function LagunaNorteApp() {
       {currentView === 'auditoria' && (
         <AuditLogView
           onBack={() => setCurrentView('main')}
+        />
+      )}
+
+      {/* ─── Guardias Full-Page View (Admin & Guardia) ─── */}
+      {currentView === 'guardias' && (
+        <GuardiasPanel
+          onBack={() => setCurrentView('main')}
+          performedBy={actualPerformedBy}
+          profileId={getProfileId()}
+          currentProfile={currentProfile}
+          userRole={userRole!}
+          onScan={() => setCurrentView('scanner')}
+        />
+      )}
+
+      {/* ─── QR Scanner View (Guardia) ─── */}
+      {currentView === 'scanner' && currentProfile && (
+        <QrScannerView
+          onBack={() => setCurrentView('guardias')}
+          profileName={currentProfile.name}
+          profileId={currentProfile.id}
         />
       )}
 

@@ -76,7 +76,7 @@ model Counter {
 model AuditLog {
   id          String   @id @default(cuid())
   action      String   // CREATE, UPDATE, DELETE
-  entityType  String   // WorkOrder, Profile, RecurringWorkOrder
+  entityType  String   // WorkOrder, Profile, RecurringWorkOrder, QrLocation
   entityId    String   // ID of the affected entity
   entityName  String   @default("") // Human-readable identifier (e.g., OT-0001, profile name)
   changes     String   @default("{}") // JSON string of what changed (oldValues -> newValues)
@@ -89,4 +89,40 @@ model AuditLog {
   @@index([createdAt(sort: Desc)])
   @@index([performedBy])
   @@index([entityId])
+}
+
+model QrLocation {
+  id          String   @id @default(cuid())
+  name        String   // e.g. "Portería Principal", "Piscina 1"
+  description String   @default("") // Additional details
+  location    String   @default("") // e.g. "Sector A - Entrada Norte"
+  code        String   @unique // Unique code embedded in QR (e.g. "QR-LOC-001")
+  active      Boolean  @default(true)
+  createdBy   String   @default("admin")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  scans       QrScan[]
+
+  @@index([code])
+  @@index([active])
+  @@index([createdAt(sort: Desc)])
+}
+
+model QrScan {
+  id           String    @id @default(cuid())
+  qrLocationId String    // Reference to the scanned QrLocation
+  scannedBy    String    @default("") // Name of the guard who scanned
+  profileId    String?   // Profile ID of the guard
+  latitude     Float?    // GPS latitude at scan time
+  longitude    Float?    // GPS longitude at scan time
+  notes        String    @default("") // Optional notes from the guard
+  createdAt    DateTime  @default(now())
+
+  location     QrLocation @relation(fields: [qrLocationId], references: [id], onDelete: Cascade)
+
+  @@index([qrLocationId])
+  @@index([scannedBy])
+  @@index([createdAt(sort: Desc)])
+  @@index([profileId])
 }
