@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { createAuditLog } from '@/app/api/audit/route';
 
 // POST /api/recurring/generate — generate WorkOrders for today from all active recurring templates
 export async function POST() {
@@ -17,21 +18,18 @@ export async function POST() {
     const chileD = chileNow.getDate();
 
     // Chile is UTC-4 (standard) or UTC-3 (DST). We calculate the UTC window:
-    // Approximate: Chile start of day in UTC is roughly 04:00 UTC the same day
-    // Instead of hardcoding offset, we use the difference between now (UTC) and chileNow
     const utcOffsetMs = now.getTime() - chileNow.getTime();
     const utcStartOfDay = new Date(Date.UTC(chileY, chileM, chileD, 0, 0, 0, 0) + utcOffsetMs);
     const utcEndOfDay = new Date(Date.UTC(chileY, chileM, chileD, 23, 59, 59, 999) + utcOffsetMs);
 
-    // Get the counter for OT IDs
-    const lastOt = await db.workOrder.findFirst({
-      orderBy: { createdAt: 'desc' },
+    // Get the counter for OT IDs — ALWAYS recalculate from actual data to prevent resets
+    const allOts = await db.workOrder.findMany({
       select: { otId: true },
     });
     let counter = 0;
-    if (lastOt?.otId) {
-      const match = lastOt.otId.match(/OT-(\d+)/);
-      if (match) counter = parseInt(match[1], 10);
+    for (const ot of allOts) {
+      const num = parseInt(ot.otId.replace('OT-', ''), 10);
+      if (!isNaN(num) && num > counter) counter = num;
     }
 
     // Fetch all active recurring work orders
@@ -77,9 +75,10 @@ export async function POST() {
       counter++;
       const otId = `OT-${String(counter).padStart(4, '0')}`;
 
+      const woId = crypto.randomUUID();
       await db.workOrder.create({
         data: {
-          id: crypto.randomUUID(),
+          id: woId,
           otId,
           activities: Array.isArray(recurring.activities) ? recurring.activities : [],
           collaborators: Array.isArray(recurring.collaborators) ? recurring.collaborators : [],
@@ -97,6 +96,21 @@ export async function POST() {
       await db.recurringWorkOrder.update({
         where: { id: recurring.id },
         data: { lastGeneratedAt: new Date() },
+      });
+
+      // Audit log: CREATE (auto-generated)
+      await createAuditLog({
+        action: 'CREATE',
+        entityType: 'WorkOrder',
+        entityId: woId,
+        entityName: otId,
+        changes: {
+          otId: { old: null, new: otId },
+          status: { old: null, new: 'Pendiente' },
+          recurringId: { old: null, new: recurring.id },
+          generatedFromRecurring: { old: null, new: recurring.name },
+        },
+        performedBy: 'Sistema (Auto)',
       });
 
       created++;

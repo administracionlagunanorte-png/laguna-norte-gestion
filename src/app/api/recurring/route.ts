@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { createAuditLog } from '@/app/api/audit/route';
 
 function serializeRecurring(row: {
   id: string;
@@ -70,6 +71,23 @@ export async function POST(request: NextRequest) {
         dayOfMonth: body.dayOfMonth != null ? Number(body.dayOfMonth) : null,
         status: body.status || 'active',
       },
+    });
+
+    // Audit log: CREATE
+    const performedBy = body._performedBy || 'admin';
+    const profileId = body._profileId || null;
+    await createAuditLog({
+      action: 'CREATE',
+      entityType: 'RecurringWorkOrder',
+      entityId: row.id,
+      entityName: row.name || row.id,
+      changes: {
+        name: { old: null, new: row.name },
+        frequency: { old: null, new: row.frequency },
+        activities: { old: null, new: row.activities },
+      },
+      performedBy,
+      profileId,
     });
 
     return NextResponse.json(serializeRecurring(row), { status: 201 });

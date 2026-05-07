@@ -72,3 +72,21 @@ model Counter {
   id    String @id @default("ot_counter")
   value Int    @default(0)
 }
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // CREATE, UPDATE, DELETE
+  entityType  String   // WorkOrder, Profile, RecurringWorkOrder
+  entityId    String   // ID of the affected entity
+  entityName  String   @default("") // Human-readable identifier (e.g., OT-0001, profile name)
+  changes     String   @default("{}") // JSON string of what changed (oldValues -> newValues)
+  performedBy String   @default("admin") // Who did it (profile name or "admin")
+  profileId   String?  // Profile ID if done by a profile user
+  createdAt   DateTime @default(now())
+
+  @@index([entityType])
+  @@index([action])
+  @@index([createdAt(sort: Desc)])
+  @@index([performedBy])
+  @@index([entityId])
+}

@@ -119,3 +119,38 @@ Stage Summary:
 - App URL: https://laguna-norte-gestion.vercel.app
 - GitHub: https://github.com/administracionlagunanorte-png/laguna-norte-gestion
 - Build compiles successfully
+
+---
+Task ID: 4
+Agent: Main Agent
+Task: Fix OT counter reset + Add audit log system for admin
+
+Work Log:
+- Analyzed counter reset root cause: `prisma db push` resets the Counter table, losing the current OT number
+- Fixed counter route: now ALWAYS recalculates from MAX(otId) in actual WorkOrder data before incrementing
+- Added AuditLog model to Prisma schema with fields: action, entityType, entityId, entityName, changes (JSON), performedBy, profileId
+- Created /api/audit route with GET (paginated, filterable) and createAuditLog helper
+- Added audit logging to ALL API routes:
+  - /api/workorders (POST=create, PUT=update, DELETE=delete)
+  - /api/workorders/[id] (PUT=update with change diff, DELETE=delete)
+  - /api/profiles (POST=create, PUT=update, DELETE=delete)
+  - /api/profiles/[id] (PUT=update with change diff, DELETE=delete)
+  - /api/recurring (POST=create)
+  - /api/recurring/[id] (PUT=update with change diff, DELETE=delete)
+  - /api/recurring/generate (POST=auto-generate with "Sistema (Auto)" as performer)
+- Updated frontend hooks (useWorkOrders, useProfiles, useRecurringWorkOrders) to pass _performedBy and _profileId
+- Added AuditLogView component with:
+  - Search by name/profile/type
+  - Filter by entity type (WorkOrder/Profile/RecurringWorkOrder)
+  - Filter by action (CREATE/UPDATE/DELETE)
+  - Expandable change details showing old→new values
+  - Color-coded action types (green=create, blue=update, red=delete)
+- Added 'auditoria' to AppView type and menu (admin-only, emoji 📜)
+- Pushed AuditLog schema to Neon database
+- Build verified successfully
+
+Stage Summary:
+- OT counter will NEVER reset again - always verifies against actual data
+- All create/update/delete operations are now audited with who did what and what changed
+- Audit log view accessible only by admin via menu → "Historial"
+- PerformedBy tracks "Administrador" for admin, "Perfil: [name]" for profile users, "Sistema (Auto)" for auto-generated OTs

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { createAuditLog } from '@/app/api/audit/route';
 
 // Helper: serialize a DB row into a client-friendly WorkOrder object
 function serializeWorkOrder(row: {
@@ -90,6 +91,24 @@ export async function POST(request: NextRequest) {
         startedAt,
         completedAt,
       },
+    });
+
+    // Audit log: CREATE
+    const performedBy = body._performedBy || 'admin';
+    const profileId = body._profileId || null;
+    await createAuditLog({
+      action: 'CREATE',
+      entityType: 'WorkOrder',
+      entityId: id,
+      entityName: otId,
+      changes: {
+        otId: { old: null, new: otId },
+        status: { old: null, new: status },
+        activities: { old: null, new: activities },
+        zoneName: { old: null, new: zoneName },
+      },
+      performedBy,
+      profileId,
     });
 
     return NextResponse.json(serializeWorkOrder(row), { status: 201 });

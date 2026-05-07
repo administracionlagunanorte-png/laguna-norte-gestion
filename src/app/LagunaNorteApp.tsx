@@ -7,7 +7,7 @@ import {
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, ShieldCheck, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
-  Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound
+  Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound, ScrollText
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -327,7 +327,7 @@ function saveZones(zones: Zone[]) {
 
 /* ─── Custom Hook: useWorkOrders (Hybrid: localStorage + API sync with immediate push) ─── */
 
-function useWorkOrders() {
+function useWorkOrders(performedBy?: string, profileId?: string) {
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -447,7 +447,7 @@ function useWorkOrders() {
       const res = await fetch('/api/workorders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newOT),
+        body: JSON.stringify({ ...newOT, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
       });
       if (res.ok) {
         setApiAvailable(true);
@@ -479,7 +479,7 @@ function useWorkOrders() {
       const res = await fetch(`/api/workorders/${data.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
       });
       if (res.ok) {
         setApiAvailable(true);
@@ -505,7 +505,7 @@ function useWorkOrders() {
 
     // Push deletion to API immediately for cross-device sync
     try {
-      const res = await fetch(`/api/workorders/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/workorders/${id}?_performedBy=${encodeURIComponent(performedBy || 'admin')}&_profileId=${profileId || ''}`, { method: 'DELETE' });
       if (res.ok) {
         setApiAvailable(true);
         setLastSync(Date.now());
@@ -533,7 +533,7 @@ function useWorkOrders() {
 
 /* ─── Custom Hook: useRecurringWorkOrders ─── */
 
-function useRecurringWorkOrders() {
+function useRecurringWorkOrders(performedBy?: string, profileId?: string) {
   const [items, setItems] = useState<RecurringWorkOrderItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -559,7 +559,7 @@ function useRecurringWorkOrders() {
       const res = await fetch('/api/recurring', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
       });
       if (res.ok) {
         const created = await res.json();
@@ -575,7 +575,7 @@ function useRecurringWorkOrders() {
       const res = await fetch(`/api/recurring/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
       });
       if (res.ok) {
         const updated = await res.json();
@@ -588,7 +588,7 @@ function useRecurringWorkOrders() {
 
   const deleteItem = useCallback(async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/recurring/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/recurring/${id}?_performedBy=${encodeURIComponent(performedBy || 'admin')}&_profileId=${profileId || ''}`, { method: 'DELETE' });
       if (res.ok) {
         await fetchItems();
         return true;
@@ -612,7 +612,7 @@ function useRecurringWorkOrders() {
 
 /* ─── Custom Hook: useProfiles ─── */
 
-function useProfiles() {
+function useProfiles(performedBy?: string, profileId?: string) {
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -638,7 +638,7 @@ function useProfiles() {
       const res = await fetch('/api/profiles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
       });
       if (res.ok) {
         const created = await res.json();
@@ -654,7 +654,7 @@ function useProfiles() {
       const res = await fetch(`/api/profiles/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
       });
       if (res.ok) {
         const updated = await res.json();
@@ -667,7 +667,7 @@ function useProfiles() {
 
   const deleteProfile = useCallback(async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/profiles/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/profiles/${id}?_performedBy=${encodeURIComponent(performedBy || 'admin')}&_profileId=${profileId || ''}`, { method: 'DELETE' });
       if (res.ok) {
         await fetchProfiles();
         return true;
@@ -4736,9 +4736,242 @@ function CalendarPanel({
   );
 }
 
+/* ─── Audit Log View (Admin Only) ─── */
+
+interface AuditLogEntry {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  entityName: string;
+  changes: Record<string, { old: unknown; new: unknown }>;
+  performedBy: string;
+  profileId: string | null;
+  createdAt: number;
+}
+
+function AuditLogView({
+  onBack,
+}: {
+  onBack: () => void;
+}) {
+  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [filterEntityType, setFilterEntityType] = useState<string>('');
+  const [filterAction, setFilterAction] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const fetchLogs = useCallback(async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams();
+      params.set('limit', '200');
+      if (filterEntityType) params.set('entityType', filterEntityType);
+      if (filterAction) params.set('action', filterAction);
+      const res = await fetch(`/api/audit?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data.logs || []);
+        setTotal(data.total || 0);
+      }
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+    }
+  }, [filterEntityType, filterAction]);
+
+  useEffect(() => {
+    fetchLogs();
+  }, [fetchLogs]);
+
+  const filteredLogs = searchTerm.trim()
+    ? logs.filter(log =>
+        log.entityName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        log.performedBy.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        log.entityType.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    : logs;
+
+  const ACTION_CONFIG: Record<string, { color: string; bg: string; icon: React.ElementType; label: string }> = {
+    'CREATE': { color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100', icon: Plus, label: 'Creación' },
+    'UPDATE': { color: 'text-blue-600', bg: 'bg-blue-50 border-blue-100', icon: Pencil, label: 'Modificación' },
+    'DELETE': { color: 'text-red-600', bg: 'bg-red-50 border-red-100', icon: Trash2, label: 'Eliminación' },
+  };
+
+  const ENTITY_LABELS: Record<string, string> = {
+    'WorkOrder': 'Orden de Trabajo',
+    'Profile': 'Perfil',
+    'RecurringWorkOrder': 'OT Repetitiva',
+  };
+
+  const formatChangeValue = (val: unknown): string => {
+    if (val === null || val === undefined) return '—';
+    if (Array.isArray(val)) {
+      if (val.length === 0) return '(vacío)';
+      return val.join(', ');
+    }
+    return String(val);
+  };
+
+  return (
+    <div className="flex-1 flex flex-col bg-slate-50">
+      {/* Header */}
+      <div className="p-4 bg-white border-b border-slate-100 sticky top-0 z-30">
+        <div className="flex items-center gap-3 mb-3">
+          <button onClick={onBack} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+            <ChevronLeft size={20} className="text-slate-600" />
+          </button>
+          <div className="flex items-center gap-2">
+            <ScrollText size={20} className="text-blue-600" />
+            <div>
+              <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Historial de Actividad</h2>
+              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Registro de modificaciones</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="space-y-2">
+          {/* Search */}
+          <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-xl">
+            <Search size={14} className="text-slate-400 flex-shrink-0" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              placeholder="Buscar por nombre, perfil o tipo..."
+              className="bg-transparent text-sm font-medium w-full outline-none placeholder:text-slate-300"
+            />
+            {searchTerm && (
+              <button onClick={() => setSearchTerm('')} className="text-slate-400 hover:text-slate-600">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          {/* Filter Chips */}
+          <div className="flex gap-2">
+            <select
+              value={filterEntityType}
+              onChange={e => setFilterEntityType(e.target.value)}
+              className="flex-1 px-3 py-2 rounded-xl bg-slate-50 text-xs font-bold text-slate-600 border-none outline-none"
+            >
+              <option value="">Todo tipo</option>
+              <option value="WorkOrder">Órdenes de Trabajo</option>
+              <option value="Profile">Perfiles</option>
+              <option value="RecurringWorkOrder">OTs Repetitivas</option>
+            </select>
+            <select
+              value={filterAction}
+              onChange={e => setFilterAction(e.target.value)}
+              className="flex-1 px-3 py-2 rounded-xl bg-slate-50 text-xs font-bold text-slate-600 border-none outline-none"
+            >
+              <option value="">Toda acción</option>
+              <option value="CREATE">Creación</option>
+              <option value="UPDATE">Modificación</option>
+              <option value="DELETE">Eliminación</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Log List */}
+      <div className="p-4 space-y-2 flex-1 overflow-y-auto pb-8">
+        {loading ? (
+          <div className="text-center py-12">
+            <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-slate-400 text-sm font-bold">Cargando historial...</p>
+          </div>
+        ) : filteredLogs.length === 0 ? (
+          <div className="text-center py-12">
+            <ScrollText size={40} className="text-slate-200 mx-auto mb-4" />
+            <p className="text-slate-400 text-sm font-bold">No hay registros de actividad</p>
+            <p className="text-slate-300 text-xs mt-1">Las acciones se registrarán automáticamente</p>
+          </div>
+        ) : (
+          <>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
+              {total} registro(s) total · {filteredLogs.length} mostrado(s)
+            </p>
+            {filteredLogs.map(log => {
+              const config = ACTION_CONFIG[log.action] || ACTION_CONFIG['UPDATE'];
+              const IconComp = config.icon;
+              const isExpanded = expandedId === log.id;
+              const changeKeys = Object.keys(log.changes || {});
+
+              return (
+                <div key={log.id} className={`rounded-2xl border ${config.bg} overflow-hidden`}>
+                  <button
+                    onClick={() => setExpandedId(isExpanded ? null : log.id)}
+                    className="w-full p-3 flex items-center gap-3 text-left"
+                  >
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${config.color} bg-white/60`}>
+                      <IconComp size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[9px] font-black uppercase ${config.color}`}>{config.label}</span>
+                        <span className="text-[8px] font-medium text-slate-400">{ENTITY_LABELS[log.entityType] || log.entityType}</span>
+                      </div>
+                      <p className="text-sm font-black text-slate-800 truncate">{log.entityName || log.entityId}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[9px] font-medium text-slate-500 flex items-center gap-1">
+                          <User size={8} /> {log.performedBy}
+                        </span>
+                        <span className="text-[9px] text-slate-300">·</span>
+                        <span className="text-[9px] font-medium text-slate-400">{formatDateTime(log.createdAt)}</span>
+                      </div>
+                    </div>
+                    {changeKeys.length > 0 && (
+                      <ChevronRight size={16} className={`text-slate-300 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                    )}
+                  </button>
+
+                  {/* Expanded Changes */}
+                  {isExpanded && changeKeys.length > 0 && (
+                    <div className="px-3 pb-3 border-t border-white/40">
+                      <div className="space-y-1.5 mt-2">
+                        {changeKeys.map(key => {
+                          const change = log.changes[key];
+                          const oldVal = formatChangeValue(change?.old);
+                          const newVal = formatChangeValue(change?.new);
+                          if (oldVal === newVal) return null;
+                          return (
+                            <div key={key} className="bg-white/60 rounded-xl p-2">
+                              <p className="text-[8px] font-black text-slate-500 uppercase mb-1">{key}</p>
+                              <div className="flex items-center gap-2 text-[10px]">
+                                {log.action === 'DELETE' ? (
+                                  <span className="text-red-500 font-medium line-through truncate">{oldVal}</span>
+                                ) : log.action === 'CREATE' ? (
+                                  <span className="text-emerald-600 font-medium truncate">{newVal}</span>
+                                ) : (
+                                  <>
+                                    <span className="text-red-400 font-medium line-through truncate max-w-[40%]">{oldVal}</span>
+                                    <span className="text-slate-300 flex-shrink-0">→</span>
+                                    <span className="text-emerald-600 font-medium truncate max-w-[40%]">{newVal}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── View Type ─── */
 
-type AppView = 'main' | 'calendar' | 'recurring' | 'dashboard' | 'admin';
+type AppView = 'main' | 'calendar' | 'recurring' | 'dashboard' | 'admin' | 'auditoria';
 
 /* ─── Hamburger Menu ─── */
 
@@ -4770,6 +5003,7 @@ function HamburgerMenu({
     { view: 'recurring', label: 'OTs Repetitivas', emoji: '🔄', adminOnly: true },
     { view: 'dashboard', label: 'Dashboard', emoji: '📊', adminOnly: true, supervisorCanSee: true },
     { view: 'admin', label: 'Administración', emoji: '⚙️', adminOnly: true },
+    { view: 'auditoria', label: 'Historial', emoji: '📜', adminOnly: true },
   ];
 
   const handleNavigate = (view: AppView) => {
@@ -5214,15 +5448,8 @@ function ProfilePasswordModal({ profile, onUnlock, onCancel }: { profile: Profil
 }
 
 export default function LagunaNorteApp() {
-  const { workOrders, loading, syncing, apiAvailable, lastSync, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders();
-  const { workAreas, personnel, zones, updateWorkAreas, updatePersonnel, updateZones } = useConfigData();
-  const { profiles, createProfile, updateProfile, deleteProfile } = useProfiles();
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('Todas');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
-  const [currentView, setCurrentView] = useState<AppView>('main');
-  const [menuOpen, setMenuOpen] = useState(false);
-  const { items: recurringItems } = useRecurringWorkOrders();
+  // Determine performedBy name for audit logging
+  // We need to compute this before hooks since it's passed as a parameter
   const [userRole, setUserRole] = useState<UserRole | null>(() => {
     try {
       const saved = localStorage.getItem(USER_ROLE_KEY);
@@ -5233,10 +5460,39 @@ export default function LagunaNorteApp() {
     } catch { return null; }
   });
 
+  // We need the profile name for audit but profiles aren't loaded yet
+  // So we use a computed performedBy based on userRole
+  const getPerformedBy = useCallback(() => {
+    if (userRole === 'admin') return 'Administrador';
+    if (userRole?.startsWith('profile:')) {
+      const profileId = userRole.replace('profile:', '');
+      return `Perfil: ${profileId}`; // Will be more specific once profiles are loaded
+    }
+    return 'Desconocido';
+  }, [userRole]);
+
+  const getProfileId = useCallback(() => {
+    if (userRole?.startsWith('profile:')) return userRole.replace('profile:', '');
+    return undefined;
+  }, [userRole]);
+
+  const { workOrders, loading, syncing, apiAvailable, lastSync, createWorkOrder, updateWorkOrder, deleteWorkOrder } = useWorkOrders(getPerformedBy(), getProfileId());
+  const { workAreas, personnel, zones, updateWorkAreas, updatePersonnel, updateZones } = useConfigData();
+  const { profiles, createProfile, updateProfile, deleteProfile } = useProfiles(getPerformedBy(), getProfileId());
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('Todas');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<Partial<WorkOrder> | null>(null);
+  const [currentView, setCurrentView] = useState<AppView>('main');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { items: recurringItems } = useRecurringWorkOrders(getPerformedBy(), getProfileId());
+
   const currentProfile = userRole?.startsWith('profile:')
     ? profiles.find(p => p.id === userRole.replace('profile:', ''))
     : null;
   const isProfileUser = !!currentProfile;
+
+  // Update performedBy to use actual profile name once profiles are loaded
+  const actualPerformedBy = userRole === 'admin' ? 'Administrador' : currentProfile?.name ? `Perfil: ${currentProfile.name}` : getPerformedBy();
 
   // Permission helpers for profile users
   const profilePerms = currentProfile?.permissions ?? ['view'];
@@ -5680,6 +5936,13 @@ export default function LagunaNorteApp() {
           onCreateProfile={createProfile}
           onUpdateProfile={updateProfile}
           onDeleteProfile={deleteProfile}
+        />
+      )}
+
+      {/* ─── Audit Log Full-Page View (Admin Only) ─── */}
+      {currentView === 'auditoria' && (
+        <AuditLogView
+          onBack={() => setCurrentView('main')}
         />
       )}
 

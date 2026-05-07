@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { createAuditLog } from '@/app/api/audit/route';
 
 // Helper: serialize a DB row into a client-friendly WorkOrder object
 function serializeWorkOrder(row: {
@@ -35,6 +36,20 @@ function serializeWorkOrder(row: {
     photosAfter: Array.isArray(row.photosAfter) ? row.photosAfter : [],
     recurringId: row.recurringId,
   };
+}
+
+// Helper: compare old and new values to generate change log
+function computeChanges(oldData: Record<string, unknown>, newData: Record<string, unknown>): Record<string, { old: unknown; new: unknown }> {
+  const changes: Record<string, { old: unknown; new: unknown }> = {};
+  for (const key of Object.keys(newData)) {
+    const oldVal = oldData[key];
+    const newVal = newData[key];
+    // Compare as JSON strings to handle arrays
+    if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+      changes[key] = { old: oldVal ?? null, new: newVal ?? null };
+    }
+  }
+  return changes;
 }
 
 // PUT /api/workorders/[id] — update a work order
@@ -78,10 +93,39 @@ export async function PUT(
     if (body.startedAt !== undefined) data.startedAt = body.startedAt ? new Date(body.startedAt) : null;
     if (body.completedAt !== undefined) data.completedAt = body.completedAt ? new Date(body.completedAt) : null;
 
+    // Fetch current record for audit logging before updating
+    const oldRecord = await db.workOrder.findUnique({ where: { id } });
+
     const row = await db.workOrder.update({
       where: { id },
       data,
     });
+
+    // Audit log: UPDATE
+    if (oldRecord) {
+      const oldData: Record<string, unknown> = {};
+      const newData: Record<string, unknown> = {};
+      for (const key of Object.keys(data)) {
+        if (key in oldRecord) {
+          oldData[key] = (oldRecord as Record<string, unknown>)[key];
+        }
+        newData[key] = data[key];
+      }
+      const changes = computeChanges(oldData, newData);
+      if (Object.keys(changes).length > 0) {
+        const performedBy = body._performedBy || 'admin';
+        const profileId = body._profileId || null;
+        await createAuditLog({
+          action: 'UPDATE',
+          entityType: 'WorkOrder',
+          entityId: id,
+          entityName: oldRecord.otId || id,
+          changes,
+          performedBy,
+          profileId,
+        });
+      }
+    }
 
     return NextResponse.json(serializeWorkOrder(row));
   } catch (error) {
@@ -95,15 +139,42 @@ export async function PUT(
 
 // DELETE /api/workorders/[id] — delete a work order
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
 
+    // Fetch the record before deleting for audit log
+    const record = await db.workOrder.findUnique({ where: { id } });
+
     await db.workOrder.delete({
       where: { id },
     });
+
+    // Audit log: DELETE
+    if (record) {
+      // Try to get performedBy from query params or headers
+      const { searchParams } = new URL(request.url);
+      const performedBy = searchParams.get('_performedBy') || 'admin';
+      const profileId = searchParams.get('_profileId') || null;
+      await createAuditLog({
+        action: 'DELETE',
+        entityType: 'WorkOrder',
+        entityId: id,
+        entityName: record.otId || id,
+        changes: {
+          otId: { old: record.otId, new: null },
+          status: { old: record.status, new: null },
+          activities: { old: record.activities, new: null },
+          zoneName: { old: record.zoneName, new: null },
+          collaborators: { old: record.collaborators, new: null },
+          description: { old: record.description, new: null },
+        },
+        performedBy,
+        profileId,
+      });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

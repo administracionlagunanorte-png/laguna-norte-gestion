@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { createAuditLog } from '@/app/api/audit/route';
 
 function serializeProfile(row: {
   id: string;
@@ -32,6 +33,19 @@ function serializeProfile(row: {
   return result;
 }
 
+// Helper: compare old and new values to generate change log
+function computeChanges(oldData: Record<string, unknown>, newData: Record<string, unknown>): Record<string, { old: unknown; new: unknown }> {
+  const changes: Record<string, { old: unknown; new: unknown }> = {};
+  for (const key of Object.keys(newData)) {
+    const oldVal = oldData[key];
+    const newVal = newData[key];
+    if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+      changes[key] = { old: oldVal ?? null, new: newVal ?? null };
+    }
+  }
+  return changes;
+}
+
 // PUT /api/profiles/[id] — update a profile
 export async function PUT(
   request: NextRequest,
@@ -51,10 +65,39 @@ export async function PUT(
     if (body.workAreaIds !== undefined) data.workAreaIds = Array.isArray(body.workAreaIds) ? body.workAreaIds : [];
     if (body.permissions !== undefined) data.permissions = Array.isArray(body.permissions) ? body.permissions : ['view'];
 
+    // Fetch old record for audit
+    const oldRecord = await db.profile.findUnique({ where: { id } });
+
     const row = await db.profile.update({
       where: { id },
       data,
     });
+
+    // Audit log: UPDATE
+    if (oldRecord) {
+      const oldData: Record<string, unknown> = {};
+      const newData: Record<string, unknown> = {};
+      for (const key of Object.keys(data)) {
+        if (key in oldRecord) {
+          oldData[key] = (oldRecord as Record<string, unknown>)[key];
+        }
+        newData[key] = data[key];
+      }
+      const changes = computeChanges(oldData, newData);
+      if (Object.keys(changes).length > 0) {
+        const performedBy = body._performedBy || 'admin';
+        const profileId = body._profileId || null;
+        await createAuditLog({
+          action: 'UPDATE',
+          entityType: 'Profile',
+          entityId: id,
+          entityName: oldRecord.name || id,
+          changes,
+          performedBy,
+          profileId,
+        });
+      }
+    }
 
     return NextResponse.json(serializeProfile(row, false));
   } catch (error) {
@@ -106,15 +149,38 @@ export async function POST(
 
 // DELETE /api/profiles/[id] — delete a profile
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
 
+    // Fetch the record before deleting for audit log
+    const record = await db.profile.findUnique({ where: { id } });
+
     await db.profile.delete({
       where: { id },
     });
+
+    // Audit log: DELETE
+    if (record) {
+      const { searchParams } = new URL(request.url);
+      const performedBy = searchParams.get('_performedBy') || 'admin';
+      const profileId = searchParams.get('_profileId') || null;
+      await createAuditLog({
+        action: 'DELETE',
+        entityType: 'Profile',
+        entityId: id,
+        entityName: record.name || id,
+        changes: {
+          name: { old: record.name, new: null },
+          permissions: { old: record.permissions, new: null },
+          workAreaIds: { old: record.workAreaIds, new: null },
+        },
+        performedBy,
+        profileId,
+      });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

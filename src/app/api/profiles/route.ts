@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { createAuditLog } from '@/app/api/audit/route';
 
 function serializeProfile(row: {
   id: string;
@@ -64,6 +65,23 @@ export async function POST(request: NextRequest) {
         workAreaIds: Array.isArray(body.workAreaIds) ? body.workAreaIds : [],
         permissions: Array.isArray(body.permissions) ? body.permissions : ['view'],
       },
+    });
+
+    // Audit log: CREATE
+    const performedBy = body._performedBy || 'admin';
+    const profileId = body._profileId || null;
+    await createAuditLog({
+      action: 'CREATE',
+      entityType: 'Profile',
+      entityId: row.id,
+      entityName: row.name || row.id,
+      changes: {
+        name: { old: null, new: row.name },
+        permissions: { old: null, new: row.permissions },
+        workAreaIds: { old: null, new: row.workAreaIds },
+      },
+      performedBy,
+      profileId,
     });
 
     return NextResponse.json(serializeProfile(row, false), { status: 201 });
