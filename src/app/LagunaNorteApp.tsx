@@ -7,7 +7,7 @@ import {
   Download, ChevronDown, Search, User, Tag, Camera, Image as ImageIcon,
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, ShieldCheck, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
-  Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star
+  Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -146,6 +146,7 @@ interface ProfileItem {
   name: string;
   hasPassword: boolean;
   password?: string;
+  accessCode: string;
   color: string;
   icon: string;
   workAreaIds: string[];
@@ -1248,6 +1249,7 @@ function AdminPanel({
   const [newZoneName, setNewZoneName] = useState('');
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfilePassword, setNewProfilePassword] = useState('');
+  const [newProfileAccessCode, setNewProfileAccessCode] = useState('');
   const [newProfileWorkAreaIds, setNewProfileWorkAreaIds] = useState<string[]>([]);
   const [newProfileColor, setNewProfileColor] = useState('bg-red-500');
   const [newProfileIcon, setNewProfileIcon] = useState('User');
@@ -1255,6 +1257,7 @@ function AdminPanel({
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [editingProfileName, setEditingProfileName] = useState('');
   const [editingProfilePassword, setEditingProfilePassword] = useState('');
+  const [editingProfileAccessCode, setEditingProfileAccessCode] = useState('');
   const [editingProfileWorkAreaIds, setEditingProfileWorkAreaIds] = useState<string[]>([]);
   const [editingProfileColor, setEditingProfileColor] = useState('bg-red-500');
   const [editingProfileIcon, setEditingProfileIcon] = useState('User');
@@ -1387,9 +1390,10 @@ function AdminPanel({
   // Profile CRUD
   const handleAddProfile = async () => {
     if (!newProfileName.trim()) return;
-    await onCreateProfile({ name: newProfileName.trim(), password: newProfilePassword, color: newProfileColor, icon: newProfileIcon, workAreaIds: newProfileWorkAreaIds, permissions: newProfilePermissions });
+    await onCreateProfile({ name: newProfileName.trim(), password: newProfilePassword, accessCode: newProfileAccessCode.trim().toUpperCase(), color: newProfileColor, icon: newProfileIcon, workAreaIds: newProfileWorkAreaIds, permissions: newProfilePermissions });
     setNewProfileName('');
     setNewProfilePassword('');
+    setNewProfileAccessCode('');
     setNewProfileWorkAreaIds([]);
     setNewProfileColor('bg-red-500');
     setNewProfileIcon('User');
@@ -1398,7 +1402,7 @@ function AdminPanel({
 
   const handleSaveProfile = async () => {
     if (!editingProfileId || !editingProfileName.trim()) return;
-    const updateData: Record<string, unknown> = { name: editingProfileName.trim(), workAreaIds: editingProfileWorkAreaIds, color: editingProfileColor, icon: editingProfileIcon, permissions: editingProfilePermissions };
+    const updateData: Record<string, unknown> = { name: editingProfileName.trim(), accessCode: editingProfileAccessCode.trim().toUpperCase(), workAreaIds: editingProfileWorkAreaIds, color: editingProfileColor, icon: editingProfileIcon, permissions: editingProfilePermissions };
     // Only send password if it was changed (non-empty)
     if (editingProfilePassword.trim()) {
       updateData.password = editingProfilePassword.trim();
@@ -1721,6 +1725,19 @@ function AdminPanel({
                   placeholder="Contraseña (opcional)"
                   className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
                 />
+                <div>
+                  <input
+                    type="text"
+                    value={newProfileAccessCode}
+                    onChange={e => setNewProfileAccessCode(e.target.value.toUpperCase())}
+                    placeholder="Código de acceso (ej: JARD1)"
+                    maxLength={20}
+                    className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm tracking-widest"
+                  />
+                  <p className="text-[8px] text-violet-400 font-bold mt-1 flex items-center gap-1">
+                    <KeyRound size={8} /> Si asignas un código, este perfil se ocultará del inicio y solo será accesible ingresando el código
+                  </p>
+                </div>
                 {/* Color selector */}
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Color del perfil</p>
@@ -1854,6 +1871,19 @@ function AdminPanel({
                         placeholder={profile.hasPassword ? 'Dejar vacío para mantener actual' : 'Nueva contraseña (opcional)'}
                         className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 font-bold text-sm"
                       />
+                      <div>
+                        <input
+                          type="text"
+                          value={editingProfileAccessCode}
+                          onChange={e => setEditingProfileAccessCode(e.target.value.toUpperCase())}
+                          placeholder={profile.accessCode ? `Código actual: ${profile.accessCode}` : 'Código de acceso (ej: JARD1)'}
+                          maxLength={20}
+                          className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 font-bold text-sm tracking-widest"
+                        />
+                        <p className="text-[8px] text-violet-400 font-bold mt-1 flex items-center gap-1">
+                          <KeyRound size={8} /> Si tiene código, el perfil se oculta del inicio y solo se accede con el código
+                        </p>
+                      </div>
                       {/* Color selector */}
                       <div>
                         <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Color del perfil</p>
@@ -1986,6 +2016,11 @@ function AdminPanel({
                                 <Shield size={7} /> con clave
                               </span>
                             )}
+                            {profile.accessCode && (
+                              <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-violet-50 text-violet-500 rounded-full text-[7px] font-black uppercase">
+                                <KeyRound size={7} /> {profile.accessCode}
+                              </span>
+                            )}
                           </div>
                           <div className="flex flex-wrap gap-1 mt-1">
                             {(profile.permissions || ['view']).map(p => {
@@ -2017,6 +2052,7 @@ function AdminPanel({
                               setEditingProfileId(profile.id);
                               setEditingProfileName(profile.name);
                               setEditingProfilePassword('');
+                              setEditingProfileAccessCode(profile.accessCode || '');
                               setEditingProfileWorkAreaIds([...profile.workAreaIds]);
                               setEditingProfileColor(profile.color || 'bg-red-500');
                               setEditingProfileIcon(profile.icon || 'User');
@@ -4805,6 +4841,17 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
   const [pendingProfile, setPendingProfile] = useState<ProfileItem | null>(null);
   const { profiles, loading: profilesLoading } = useProfiles();
 
+  // Access code login state
+  const [accessCode, setAccessCode] = useState('');
+  const [codeError, setCodeError] = useState('');
+  const [codeVerifying, setCodeVerifying] = useState(false);
+  const [codeProfileNeedsPwd, setCodeProfileNeedsPwd] = useState<ProfileItem | null>(null);
+  const [codePwdInput, setCodePwdInput] = useState('');
+  const codeInputRef = useRef<HTMLInputElement>(null);
+
+  // Profiles visible as buttons = those WITHOUT an accessCode
+  const publicProfiles = profiles.filter(p => !p.accessCode);
+
   // Map color classes to gradient + shadow for profile buttons
   const PROFILE_STYLE_MAP: Record<string, { gradient: string; shadow: string }> = {
     'bg-green-600':  { gradient: 'from-green-600 to-green-700',  shadow: 'shadow-green-200' },
@@ -4865,6 +4912,59 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
     return User;
   };
 
+  // Handle access code verification
+  const handleCodeLogin = useCallback(async () => {
+    if (!accessCode.trim()) return;
+    setCodeError('');
+    setCodeVerifying(true);
+    try {
+      const res = await fetch('/api/profiles/verify-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: accessCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCodeError(data.error || 'Código no válido');
+        return;
+      }
+      if (data.profile.needsPassword) {
+        setCodeProfileNeedsPwd(data.profile as ProfileItem);
+      } else {
+        localStorage.setItem(USER_ROLE_KEY, `profile:${data.profile.id}`);
+        onLogin(`profile:${data.profile.id}`);
+      }
+    } catch {
+      setCodeError('Error de conexión');
+    } finally {
+      setCodeVerifying(false);
+    }
+  }, [accessCode, onLogin]);
+
+  const handleCodePwdVerify = useCallback(async () => {
+    if (!codeProfileNeedsPwd || !codePwdInput) return;
+    setCodeVerifying(true);
+    setCodeError('');
+    try {
+      const res = await fetch('/api/profiles/verify-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: accessCode.trim(), password: codePwdInput }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCodeError(data.error || 'Contraseña incorrecta');
+        return;
+      }
+      localStorage.setItem(USER_ROLE_KEY, `profile:${data.profile.id}`);
+      onLogin(`profile:${data.profile.id}`);
+    } catch {
+      setCodeError('Error de conexión');
+    } finally {
+      setCodeVerifying(false);
+    }
+  }, [codeProfileNeedsPwd, codePwdInput, accessCode, onLogin]);
+
   return (
     <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex items-center justify-center p-6">
       <div className="w-full max-w-sm">
@@ -4873,63 +4973,120 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
           <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Laguna Norte</h1>
           <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-1">Condominio & Parque - Sistema de Gestión</p>
         </div>
-        <div className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
-          <p className="text-center text-sm font-bold text-slate-500 uppercase">Selecciona tu perfil</p>
-          {/* Admin button */}
-          <button
-            onClick={() => setShowPwdModal(true)}
-            className="w-full py-5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-2xl font-black uppercase shadow-lg shadow-blue-200 active:scale-95 transition-transform flex items-center justify-center gap-3"
-          >
-            <Shield size={22} />
-            <div className="text-left">
-              <div className="text-sm">Administrador</div>
-              <div className="text-[9px] font-semibold opacity-80">Requiere clave de acceso</div>
-            </div>
-          </button>
 
-          {/* Dynamic profiles */}
-          {profilesLoading && (
-            <div className="flex items-center justify-center py-4">
-              <div className="w-5 h-5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+        {codeProfileNeedsPwd ? (
+          <div className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
+            <p className="text-center text-sm font-bold text-slate-500 uppercase">Ingresa tu clave</p>
+            <div className="flex items-center justify-center gap-2">
+              <div className={`w-3 h-3 rounded-full ${codeProfileNeedsPwd.color || 'bg-slate-400'}`} />
+              <span className="font-black text-slate-700 text-sm uppercase">{codeProfileNeedsPwd.name}</span>
             </div>
-          )}
-          {!profilesLoading && profiles.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-center text-[9px] font-black text-slate-400 uppercase tracking-wider">Perfiles por Cargo</p>
-              {profiles.map(profile => {
-                const style = getProfileStyle(profile);
-                const ProfileIcon = getProfileIcon(profile);
-                const handleProfileClick = () => {
-                  if (profile.hasPassword) {
-                    setPendingProfile(profile);
-                    setShowProfilePwdModal(true);
-                  } else {
-                    localStorage.setItem(USER_ROLE_KEY, `profile:${profile.id}`);
-                    onLogin(`profile:${profile.id}`);
-                  }
-                };
-                return (
-                  <button
-                    key={profile.id}
-                    onClick={handleProfileClick}
-                    className={`w-full py-4 bg-gradient-to-r ${style.gradient} text-white rounded-2xl font-black uppercase shadow-lg ${style.shadow} active:scale-95 transition-transform flex items-center justify-center gap-3`}
-                  >
-                    <ProfileIcon size={22} />
-                    <div className="text-left">
-                      <div className="text-sm">{profile.name}</div>
-                      <div className="text-[9px] font-semibold opacity-80">
-                        {profile.hasPassword ? 'Requiere clave de acceso' : (profile.permissions || ['view']).map(p => {
-                          const permOpt = [{ value: 'view', label: 'Ver' }, { value: 'supervisor', label: 'Supervisor' }, { value: 'create', label: 'Crear' }, { value: 'edit', label: 'Editar' }, { value: 'delete', label: 'Eliminar' }].find(o => o.value === p);
-                          return permOpt ? permOpt.label : '';
-                        }).filter(Boolean).join(' · ')}
+            <input
+              ref={codeInputRef}
+              type="password"
+              value={codePwdInput}
+              onChange={e => setCodePwdInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCodePwdVerify()}
+              placeholder="Tu clave de acceso"
+              className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-200 font-bold text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-400"
+              autoFocus
+            />
+            {codeError && <p className="text-red-500 text-[10px] font-bold text-center">{codeError}</p>}
+            <button
+              onClick={handleCodePwdVerify}
+              disabled={codeVerifying || !codePwdInput}
+              className="w-full py-3 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase disabled:opacity-40 active:scale-95 transition-transform"
+            >
+              {codeVerifying ? 'Verificando...' : 'Ingresar'}
+            </button>
+            <button
+              onClick={() => { setCodeProfileNeedsPwd(null); setCodePwdInput(''); setCodeError(''); }}
+              className="w-full py-2 text-slate-400 text-[10px] font-bold hover:text-slate-600"
+            >
+              Volver
+            </button>
+          </div>
+        ) : (
+          <div className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 space-y-4">
+            <button
+              onClick={() => setShowPwdModal(true)}
+              className="w-full py-5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-2xl font-black uppercase shadow-lg shadow-blue-200 active:scale-95 transition-transform flex items-center justify-center gap-3"
+            >
+              <Shield size={22} />
+              <div className="text-left">
+                <div className="text-sm">Administrador</div>
+                <div className="text-[9px] font-semibold opacity-80">Requiere clave de acceso</div>
+              </div>
+            </button>
+
+            {profilesLoading && (
+              <div className="flex items-center justify-center py-4">
+                <div className="w-5 h-5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+              </div>
+            )}
+            {!profilesLoading && publicProfiles.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-center text-[9px] font-black text-slate-400 uppercase tracking-wider">Perfiles por Cargo</p>
+                {publicProfiles.map(profile => {
+                  const style = getProfileStyle(profile);
+                  const ProfileIcon = getProfileIcon(profile);
+                  const handleProfileClick = () => {
+                    if (profile.hasPassword) {
+                      setPendingProfile(profile);
+                      setShowProfilePwdModal(true);
+                    } else {
+                      localStorage.setItem(USER_ROLE_KEY, `profile:${profile.id}`);
+                      onLogin(`profile:${profile.id}`);
+                    }
+                  };
+                  return (
+                    <button
+                      key={profile.id}
+                      onClick={handleProfileClick}
+                      className={`w-full py-4 bg-gradient-to-r ${style.gradient} text-white rounded-2xl font-black uppercase shadow-lg ${style.shadow} active:scale-95 transition-transform flex items-center justify-center gap-3`}
+                    >
+                      <ProfileIcon size={22} />
+                      <div className="text-left">
+                        <div className="text-sm">{profile.name}</div>
+                        <div className="text-[9px] font-semibold opacity-80">
+                          {profile.hasPassword ? 'Requiere clave de acceso' : (profile.permissions || ['view']).map(p => {
+                            const permOpt = [{ value: 'view', label: 'Ver' }, { value: 'supervisor', label: 'Supervisor' }, { value: 'create', label: 'Crear' }, { value: 'edit', label: 'Editar' }, { value: 'delete', label: 'Eliminar' }].find(o => o.value === p);
+                            return permOpt ? permOpt.label : '';
+                          }).filter(Boolean).join(' · ')}
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                );
-              })}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="pt-2 border-t border-slate-100">
+              <p className="text-center text-[9px] font-black text-violet-400 uppercase tracking-wider mb-2 flex items-center justify-center gap-1">
+                <KeyRound size={10} /> Ingresa tu código de acceso
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={accessCode}
+                  onChange={e => { setAccessCode(e.target.value.toUpperCase()); setCodeError(''); }}
+                  onKeyDown={e => e.key === 'Enter' && handleCodeLogin()}
+                  placeholder="EJ: JARD1"
+                  className="flex-1 p-3 rounded-xl bg-slate-50 border border-slate-200 font-black text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-violet-400"
+                  maxLength={20}
+                />
+                <button
+                  onClick={handleCodeLogin}
+                  disabled={codeVerifying || !accessCode.trim()}
+                  className="px-5 py-3 bg-violet-600 text-white rounded-xl font-black text-xs uppercase disabled:opacity-40 active:scale-95 transition-transform"
+                >
+                  {codeVerifying ? '...' : 'Ir'}
+                </button>
+              </div>
+              {codeError && <p className="text-red-500 text-[10px] font-bold text-center mt-1">{codeError}</p>}
             </div>
-          )}
-        </div>
+          </div>
+        )}
         <p className="text-center text-[8px] text-slate-300 mt-6 font-medium uppercase">Administración - Asesorías Integrales CyJ</p>
       </div>
       {showPwdModal && (

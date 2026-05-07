@@ -5,6 +5,7 @@ function serializeProfile(row: {
   id: string;
   name: string;
   password: string;
+  accessCode: string;
   color: string;
   icon: string;
   workAreaIds: string[];
@@ -15,11 +16,13 @@ function serializeProfile(row: {
   const result: Record<string, unknown> = {
     id: row.id,
     name: row.name,
+    accessCode: row.accessCode || '',
     color: row.color || '',
     icon: row.icon || '',
     workAreaIds: Array.isArray(row.workAreaIds) ? row.workAreaIds : [],
     permissions: Array.isArray(row.permissions) ? row.permissions : ['view'],
     hasPassword: row.password !== '',
+    hasAccessCode: row.accessCode !== '',
     createdAt: new Date(row.createdAt).getTime(),
     updatedAt: new Date(row.updatedAt).getTime(),
   };
@@ -55,6 +58,7 @@ export async function POST(request: NextRequest) {
       data: {
         name: body.name || '',
         password: body.password || '',
+        accessCode: body.accessCode || '',
         color: body.color || '',
         icon: body.icon || '',
         workAreaIds: Array.isArray(body.workAreaIds) ? body.workAreaIds : [],
