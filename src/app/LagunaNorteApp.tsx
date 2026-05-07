@@ -344,6 +344,14 @@ function useWorkOrders() {
       const migrated = Array.isArray(data) ? data.map(migrateWorkOrder) : [];
       setWorkOrders(migrated);
       writeToLocalStorage(migrated);
+      // Sync local counter with max OT from DB to prevent counter reset
+      if (migrated.length > 0) {
+        const maxNum = migrated.reduce((max, ot) => {
+          const num = parseInt(ot.otId.replace('OT-', ''), 10);
+          return !isNaN(num) && num > max ? num : max;
+        }, 0);
+        writeCounterToLocalStorage(maxNum);
+      }
       setApiAvailable(true);
       setLastSync(Date.now());
     } catch {
@@ -382,9 +390,30 @@ function useWorkOrders() {
   }, []);
 
   const createWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
-    let counter = readCounterFromLocalStorage();
-    counter++;
-    writeCounterToLocalStorage(counter);
+    // Get next OT counter from the database (authoritative source)
+    let counter = 0;
+    try {
+      const counterRes = await fetch('/api/counter', { method: 'POST' });
+      if (counterRes.ok) {
+        const counterData = await counterRes.json();
+        counter = counterData.value;
+      } else {
+        // Fallback: try to calculate from existing OTs in state
+        const existingMax = workOrders.reduce((max, ot) => {
+          const num = parseInt(ot.otId.replace('OT-', ''), 10);
+          return !isNaN(num) && num > max ? num : max;
+        }, 0);
+        counter = existingMax + 1;
+      }
+    } catch {
+      // Offline fallback: use local data
+      const existingMax = workOrders.reduce((max, ot) => {
+        const num = parseInt(ot.otId.replace('OT-', ''), 10);
+        return !isNaN(num) && num > max ? num : max;
+      }, 0);
+      counter = existingMax + 1;
+    }
+
     const otId = `OT-${String(counter).padStart(4, '0')}`;
 
     const status = data.status ?? 'Pendiente';
@@ -432,7 +461,7 @@ function useWorkOrders() {
     }
 
     return newOT;
-  }, [fetchWorkOrders]);
+  }, [fetchWorkOrders, workOrders]);
 
   const updateWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
     if (!data.id) return null;

@@ -56,6 +56,7 @@ model Profile {
   id          String   @id @default(cuid())
   name        String
   password    String   @default("")
+  accessCode  String   @default("")
   color       String   @default("")
   icon        String   @default("")
   workAreaIds String[] @default([])
@@ -64,4 +65,10 @@ model Profile {
   updatedAt   DateTime @updatedAt
 
   @@index([name])
+  @@index([accessCode])
+}
+
+model Counter {
+  id    String @id @default("ot_counter")
+  value Int    @default(0)
 }
