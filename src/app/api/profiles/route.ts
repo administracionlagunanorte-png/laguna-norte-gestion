@@ -8,6 +8,7 @@ function serializeProfile(row: {
   color: string;
   icon: string;
   workAreaIds: string[];
+  permissions: string[];
   createdAt: Date;
   updatedAt: Date;
 }, includePassword = false) {
@@ -17,6 +18,7 @@ function serializeProfile(row: {
     color: row.color || '',
     icon: row.icon || '',
     workAreaIds: Array.isArray(row.workAreaIds) ? row.workAreaIds : [],
+    permissions: Array.isArray(row.permissions) ? row.permissions : ['view'],
     hasPassword: row.password !== '',
     createdAt: new Date(row.createdAt).getTime(),
     updatedAt: new Date(row.updatedAt).getTime(),
@@ -56,6 +58,7 @@ export async function POST(request: NextRequest) {
         color: body.color || '',
         icon: body.icon || '',
         workAreaIds: Array.isArray(body.workAreaIds) ? body.workAreaIds : [],
+        permissions: Array.isArray(body.permissions) ? body.permissions : ['view'],
       },
     });
 

@@ -149,6 +149,7 @@ interface ProfileItem {
   color: string;
   icon: string;
   workAreaIds: string[];
+  permissions: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -1221,12 +1222,14 @@ function AdminPanel({
   const [newProfileWorkAreaIds, setNewProfileWorkAreaIds] = useState<string[]>([]);
   const [newProfileColor, setNewProfileColor] = useState('bg-red-500');
   const [newProfileIcon, setNewProfileIcon] = useState('User');
+  const [newProfilePermissions, setNewProfilePermissions] = useState<string[]>(['view']);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [editingProfileName, setEditingProfileName] = useState('');
   const [editingProfilePassword, setEditingProfilePassword] = useState('');
   const [editingProfileWorkAreaIds, setEditingProfileWorkAreaIds] = useState<string[]>([]);
   const [editingProfileColor, setEditingProfileColor] = useState('bg-red-500');
   const [editingProfileIcon, setEditingProfileIcon] = useState('User');
+  const [editingProfilePermissions, setEditingProfilePermissions] = useState<string[]>(['view']);
 
   const COLOR_OPTIONS = [
     'bg-green-600', 'bg-orange-500', 'bg-cyan-500', 'bg-purple-500', 'bg-yellow-500',
@@ -1247,6 +1250,13 @@ function AdminPanel({
     { value: 'ClipboardList', label: 'Portapapeles' },
     { value: 'Eye', label: 'Ojo' },
     { value: 'Star', label: 'Estrella' },
+  ];
+
+  const PERMISSION_OPTIONS = [
+    { value: 'view', label: 'Visualizar', desc: 'Ver OTs, subir fotos y completar', color: 'bg-blue-500' },
+    { value: 'create', label: 'Crear', desc: 'Crear nuevas OTs', color: 'bg-emerald-500' },
+    { value: 'edit', label: 'Editar', desc: 'Editar OTs existentes', color: 'bg-amber-500' },
+    { value: 'delete', label: 'Eliminar', desc: 'Eliminar OTs', color: 'bg-red-500' },
   ];
 
   if (!isOpen) return null;
@@ -1347,17 +1357,18 @@ function AdminPanel({
   // Profile CRUD
   const handleAddProfile = async () => {
     if (!newProfileName.trim()) return;
-    await onCreateProfile({ name: newProfileName.trim(), password: newProfilePassword, color: newProfileColor, icon: newProfileIcon, workAreaIds: newProfileWorkAreaIds });
+    await onCreateProfile({ name: newProfileName.trim(), password: newProfilePassword, color: newProfileColor, icon: newProfileIcon, workAreaIds: newProfileWorkAreaIds, permissions: newProfilePermissions });
     setNewProfileName('');
     setNewProfilePassword('');
     setNewProfileWorkAreaIds([]);
     setNewProfileColor('bg-red-500');
     setNewProfileIcon('User');
+    setNewProfilePermissions(['view']);
   };
 
   const handleSaveProfile = async () => {
     if (!editingProfileId || !editingProfileName.trim()) return;
-    const updateData: Record<string, unknown> = { name: editingProfileName.trim(), workAreaIds: editingProfileWorkAreaIds, color: editingProfileColor, icon: editingProfileIcon };
+    const updateData: Record<string, unknown> = { name: editingProfileName.trim(), workAreaIds: editingProfileWorkAreaIds, color: editingProfileColor, icon: editingProfileIcon, permissions: editingProfilePermissions };
     // Only send password if it was changed (non-empty)
     if (editingProfilePassword.trim()) {
       updateData.password = editingProfilePassword.trim();
@@ -1716,6 +1727,50 @@ function AdminPanel({
                     ))}
                   </div>
                 </div>
+                {/* Permissions selector */}
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Permisos del perfil</p>
+                  <div className="space-y-2">
+                    {PERMISSION_OPTIONS.map(perm => {
+                      const isActive = newProfilePermissions.includes(perm.value);
+                      return (
+                        <button
+                          key={perm.value}
+                          type="button"
+                          onClick={() => {
+                            setNewProfilePermissions(prev => {
+                              if (perm.value === 'view') return prev; // view is always on
+                              return prev.includes(perm.value)
+                                ? prev.filter(p => p !== perm.value)
+                                : [...prev, perm.value];
+                            });
+                          }}
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
+                            isActive
+                              ? 'bg-white border-2 border-slate-300 shadow-sm'
+                              : 'bg-white border border-slate-100 opacity-50 hover:opacity-80'
+                          }`}
+                        >
+                          <div className={`w-8 h-8 rounded-lg ${perm.color} flex items-center justify-center flex-shrink-0 ${isActive ? '' : 'opacity-40'}`}>
+                            {perm.value === 'view' && <Eye size={14} className="text-white" />}
+                            {perm.value === 'create' && <Plus size={14} className="text-white" />}
+                            {perm.value === 'edit' && <Pencil size={14} className="text-white" />}
+                            {perm.value === 'delete' && <Trash2 size={14} className="text-white" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] font-black text-slate-700 uppercase">{perm.label}</p>
+                            <p className="text-[8px] text-slate-400 font-medium">{perm.desc}</p>
+                          </div>
+                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                            isActive ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
+                          }`}>
+                            {isActive && <span className="text-white text-[8px]">✓</span>}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 {/* Work area selector - checkboxes */}
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Áreas de trabajo que puede ver</p>
@@ -1804,6 +1859,50 @@ function AdminPanel({
                           ))}
                         </div>
                       </div>
+                      {/* Permissions selector */}
+                      <div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Permisos del perfil</p>
+                        <div className="space-y-2">
+                          {PERMISSION_OPTIONS.map(perm => {
+                            const isActive = editingProfilePermissions.includes(perm.value);
+                            return (
+                              <button
+                                key={perm.value}
+                                type="button"
+                                onClick={() => {
+                                  setEditingProfilePermissions(prev => {
+                                    if (perm.value === 'view') return prev; // view is always on
+                                    return prev.includes(perm.value)
+                                      ? prev.filter(p => p !== perm.value)
+                                      : [...prev, perm.value];
+                                  });
+                                }}
+                                className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
+                                  isActive
+                                    ? 'bg-white border-2 border-slate-300 shadow-sm'
+                                    : 'bg-white border border-slate-100 opacity-50 hover:opacity-80'
+                                }`}
+                              >
+                                <div className={`w-8 h-8 rounded-lg ${perm.color} flex items-center justify-center flex-shrink-0 ${isActive ? '' : 'opacity-40'}`}>
+                                  {perm.value === 'view' && <Eye size={14} className="text-white" />}
+                                  {perm.value === 'create' && <Plus size={14} className="text-white" />}
+                                  {perm.value === 'edit' && <Pencil size={14} className="text-white" />}
+                                  {perm.value === 'delete' && <Trash2 size={14} className="text-white" />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[10px] font-black text-slate-700 uppercase">{perm.label}</p>
+                                  <p className="text-[8px] text-slate-400 font-medium">{perm.desc}</p>
+                                </div>
+                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                  isActive ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
+                                }`}>
+                                  {isActive && <span className="text-white text-[8px]">✓</span>}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                       <div>
                         <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Áreas de trabajo que puede ver</p>
                         <div className="flex flex-wrap gap-2">
@@ -1857,6 +1956,16 @@ function AdminPanel({
                             )}
                           </div>
                           <div className="flex flex-wrap gap-1 mt-1">
+                            {(profile.permissions || ['view']).map(p => {
+                              const permOpt = PERMISSION_OPTIONS.find(o => o.value === p);
+                              return permOpt ? (
+                                <span key={p} className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase text-white ${permOpt.color}`}>
+                                  {permOpt.label}
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                          <div className="flex flex-wrap gap-1 mt-1">
                             {profile.workAreaIds.map(waId => {
                               const wa = workAreas.find(a => a.id === waId);
                               return wa ? (
@@ -1879,6 +1988,7 @@ function AdminPanel({
                               setEditingProfileWorkAreaIds([...profile.workAreaIds]);
                               setEditingProfileColor(profile.color || 'bg-red-500');
                               setEditingProfileIcon(profile.icon || 'User');
+                              setEditingProfilePermissions(profile.permissions?.length ? [...profile.permissions] : ['view']);
                             }}
                             className="p-2 bg-blue-50 text-blue-600 rounded-xl active:scale-95 transition-transform"
                           >
@@ -1923,6 +2033,7 @@ function ModalInner({
   personnel,
   zones,
   userRole,
+  permissions,
 }: {
   editingItem: Partial<WorkOrder> | null;
   onClose: () => void;
@@ -1933,6 +2044,7 @@ function ModalInner({
   personnel: Personnel[];
   zones: Zone[];
   userRole: UserRole;
+  permissions?: string[];
 }) {
   const [form, setForm] = useState(() => {
     // Try to infer work area from editing item's activities
@@ -1965,7 +2077,11 @@ function ModalInner({
   const [descriptionManuallyEdited, setDescriptionManuallyEdited] = useState(!!editingItem?.description);
 
   const isProfileRole = typeof userRole === 'string' && userRole.startsWith('profile:');
-  const isReadOnly = isProfileRole;
+  const perms = permissions ?? ['view'];
+  // Read-only for profile users without edit permission (editing existing items)
+  // or without create permission (creating new items)
+  const canEditThis = editingItem?.id ? perms.includes('edit') : perms.includes('create');
+  const isReadOnly = isProfileRole && !canEditThis;
 
   // Derived filtered data based on selected work area
   const selectedWorkArea = workAreas.find(wa => wa.id === form.workAreaId);
@@ -2331,6 +2447,15 @@ function ModalInner({
                   <Trash2 size={20} />
                 </button>
               )}
+              {isProfileRole && perms.includes('delete') && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(editingItem.id!)}
+                  className="p-3 bg-red-50 text-red-500 rounded-xl"
+                >
+                  <Trash2 size={20} />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -2350,6 +2475,7 @@ function Modal({
   personnel,
   zones,
   userRole,
+  permissions,
 }: {
   isOpen: boolean;
   editingItem: Partial<WorkOrder> | null;
@@ -2361,6 +2487,7 @@ function Modal({
   personnel: Personnel[];
   zones: Zone[];
   userRole: UserRole;
+  permissions?: string[];
 }) {
   if (!isOpen) return null;
   const modalKey = editingItem?.id ?? 'new';
@@ -2376,6 +2503,7 @@ function Modal({
       personnel={personnel}
       zones={zones}
       userRole={userRole}
+      permissions={permissions}
     />
   );
 }
@@ -4753,7 +4881,10 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
                     <div className="text-left">
                       <div className="text-sm">{profile.name}</div>
                       <div className="text-[9px] font-semibold opacity-80">
-                        {profile.hasPassword ? 'Requiere clave de acceso' : 'Solo ver, subir fotos y completar OTs'}
+                        {profile.hasPassword ? 'Requiere clave de acceso' : (profile.permissions || ['view']).map(p => {
+                          const permOpt = [{ value: 'view', label: 'Ver' }, { value: 'create', label: 'Crear' }, { value: 'edit', label: 'Editar' }, { value: 'delete', label: 'Eliminar' }].find(o => o.value === p);
+                          return permOpt ? permOpt.label : '';
+                        }).filter(Boolean).join(' · ')}
                       </div>
                     </div>
                   </button>
@@ -4912,6 +5043,13 @@ export default function LagunaNorteApp() {
     ? profiles.find(p => p.id === userRole.replace('profile:', ''))
     : null;
   const isProfileUser = !!currentProfile;
+
+  // Permission helpers for profile users
+  const profilePerms = currentProfile?.permissions ?? ['view'];
+  const canCreate = !isProfileUser || profilePerms.includes('create');
+  const canEdit = !isProfileUser || profilePerms.includes('edit');
+  const canDelete = !isProfileUser || profilePerms.includes('delete');
+  const canView = !isProfileUser || profilePerms.includes('view');
 
   const handleSaveOT = useCallback(async (data: Partial<WorkOrder>) => {
     if (data.id) {
@@ -5104,7 +5242,7 @@ export default function LagunaNorteApp() {
           </div>
 
           {/* ─── Quick Create Categories ─── */}
-          {!isProfileUser && (
+          {canCreate && (
           <div>
             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Crear Planificación</p>
             <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
@@ -5286,7 +5424,7 @@ export default function LagunaNorteApp() {
       )}
 
       {/* ─── Floating Action Button ─── */}
-      {currentView === 'main' && !isProfileUser && (
+      {currentView === 'main' && canCreate && (
         <button
           onClick={handleOpenNew}
           className="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-300/50 active:scale-90 transition-transform z-50"
@@ -5307,6 +5445,7 @@ export default function LagunaNorteApp() {
         personnel={personnel}
         zones={zones}
         userRole={userRole}
+        permissions={profilePerms}
       />
 
       {/* ─── Dashboard Full-Page View ─── */}
