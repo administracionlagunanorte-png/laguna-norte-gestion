@@ -144,6 +144,8 @@ interface RecurringWorkOrderItem {
 interface ProfileItem {
   id: string;
   name: string;
+  hasPassword: boolean;
+  password?: string;
   workAreaIds: string[];
   createdAt: number;
   updatedAt: number;
@@ -1213,9 +1215,11 @@ function AdminPanel({
   const [newPersonWorkAreaId, setNewPersonWorkAreaId] = useState('');
   const [newZoneName, setNewZoneName] = useState('');
   const [newProfileName, setNewProfileName] = useState('');
+  const [newProfilePassword, setNewProfilePassword] = useState('');
   const [newProfileWorkAreaIds, setNewProfileWorkAreaIds] = useState<string[]>([]);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [editingProfileName, setEditingProfileName] = useState('');
+  const [editingProfilePassword, setEditingProfilePassword] = useState('');
   const [editingProfileWorkAreaIds, setEditingProfileWorkAreaIds] = useState<string[]>([]);
 
   const COLOR_OPTIONS = [
@@ -1321,15 +1325,22 @@ function AdminPanel({
   // Profile CRUD
   const handleAddProfile = async () => {
     if (!newProfileName.trim()) return;
-    await onCreateProfile({ name: newProfileName.trim(), workAreaIds: newProfileWorkAreaIds });
+    await onCreateProfile({ name: newProfileName.trim(), password: newProfilePassword, workAreaIds: newProfileWorkAreaIds });
     setNewProfileName('');
+    setNewProfilePassword('');
     setNewProfileWorkAreaIds([]);
   };
 
   const handleSaveProfile = async () => {
     if (!editingProfileId || !editingProfileName.trim()) return;
-    await onUpdateProfile(editingProfileId, { name: editingProfileName.trim(), workAreaIds: editingProfileWorkAreaIds });
+    const updateData: Record<string, unknown> = { name: editingProfileName.trim(), workAreaIds: editingProfileWorkAreaIds };
+    // Only send password if it was changed (non-empty)
+    if (editingProfilePassword.trim()) {
+      updateData.password = editingProfilePassword.trim();
+    }
+    await onUpdateProfile(editingProfileId, updateData as any);
     setEditingProfileId(null);
+    setEditingProfilePassword('');
   };
 
   const handleDeleteProfile = async (id: string) => {
@@ -1635,6 +1646,13 @@ function AdminPanel({
                   placeholder="Nombre del cargo (ej: Jardinería, Aseo...)"
                   className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
                 />
+                <input
+                  type="password"
+                  value={newProfilePassword}
+                  onChange={e => setNewProfilePassword(e.target.value)}
+                  placeholder="Contraseña (opcional)"
+                  className="w-full p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
+                />
                 {/* Work area selector - checkboxes */}
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Áreas de trabajo que puede ver</p>
@@ -1680,6 +1698,13 @@ function AdminPanel({
                         onChange={e => setEditingProfileName(e.target.value)}
                         className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 font-bold text-sm"
                       />
+                      <input
+                        type="password"
+                        value={editingProfilePassword}
+                        onChange={e => setEditingProfilePassword(e.target.value)}
+                        placeholder={profile.hasPassword ? 'Dejar vacío para mantener actual' : 'Nueva contraseña (opcional)'}
+                        className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 font-bold text-sm"
+                      />
                       <div>
                         <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Áreas de trabajo que puede ver</p>
                         <div className="flex flex-wrap gap-2">
@@ -1723,7 +1748,14 @@ function AdminPanel({
                     <>
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="font-black text-slate-800 text-sm uppercase">{profile.name}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-black text-slate-800 text-sm uppercase">{profile.name}</p>
+                            {profile.hasPassword && (
+                              <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-amber-50 text-amber-500 rounded-full text-[7px] font-black uppercase">
+                                <Shield size={7} /> con clave
+                              </span>
+                            )}
+                          </div>
                           <div className="flex flex-wrap gap-1 mt-1">
                             {profile.workAreaIds.map(waId => {
                               const wa = workAreas.find(a => a.id === waId);
@@ -1743,6 +1775,7 @@ function AdminPanel({
                             onClick={() => {
                               setEditingProfileId(profile.id);
                               setEditingProfileName(profile.name);
+                              setEditingProfilePassword('');
                               setEditingProfileWorkAreaIds([...profile.workAreaIds]);
                             }}
                             className="p-2 bg-blue-50 text-blue-600 rounded-xl active:scale-95 transition-transform"
@@ -4500,6 +4533,8 @@ function HamburgerMenu({
 
 function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => void; workAreas: WorkArea[] }) {
   const [showPwdModal, setShowPwdModal] = useState(false);
+  const [showProfilePwdModal, setShowProfilePwdModal] = useState(false);
+  const [pendingProfile, setPendingProfile] = useState<ProfileItem | null>(null);
   const { profiles, loading: profilesLoading } = useProfiles();
 
   // Map work area color classes to gradient + shadow + icon for profile buttons
@@ -4558,20 +4593,26 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
               {profiles.map(profile => {
                 const style = getProfileStyle(profile);
                 const ProfileIcon = style.icon;
+                const handleProfileClick = () => {
+                  if (profile.hasPassword) {
+                    setPendingProfile(profile);
+                    setShowProfilePwdModal(true);
+                  } else {
+                    localStorage.setItem(USER_ROLE_KEY, `profile:${profile.id}`);
+                    onLogin(`profile:${profile.id}`);
+                  }
+                };
                 return (
                   <button
                     key={profile.id}
-                    onClick={() => {
-                      localStorage.setItem(USER_ROLE_KEY, `profile:${profile.id}`);
-                      onLogin(`profile:${profile.id}`);
-                    }}
+                    onClick={handleProfileClick}
                     className={`w-full py-4 bg-gradient-to-r ${style.gradient} text-white rounded-2xl font-black uppercase shadow-lg ${style.shadow} active:scale-95 transition-transform flex items-center justify-center gap-3`}
                   >
                     <ProfileIcon size={22} />
                     <div className="text-left">
                       <div className="text-sm">{profile.name}</div>
                       <div className="text-[9px] font-semibold opacity-80">
-                        Solo ver, subir fotos y completar OTs
+                        {profile.hasPassword ? 'Requiere clave de acceso' : 'Solo ver, subir fotos y completar OTs'}
                       </div>
                     </div>
                   </button>
@@ -4591,6 +4632,30 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
             }
           }}
           onCancel={() => setShowPwdModal(false)}
+        />
+      )}
+      {showProfilePwdModal && pendingProfile && (
+        <ProfilePasswordModal
+          profile={pendingProfile}
+          onUnlock={async (pwd) => {
+            try {
+              const res = await fetch(`/api/profiles/${pendingProfile.id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: pwd }),
+              });
+              if (res.ok) {
+                localStorage.setItem(USER_ROLE_KEY, `profile:${pendingProfile.id}`);
+                onLogin(`profile:${pendingProfile.id}`);
+              } else {
+                return 'Contraseña incorrecta';
+              }
+            } catch {
+              return 'Error de conexión';
+            }
+            return null;
+          }}
+          onCancel={() => { setShowProfilePwdModal(false); setPendingProfile(null); }}
         />
       )}
     </div>
@@ -4629,6 +4694,52 @@ function PasswordModal({ onUnlock, onCancel }: { onUnlock: (pwd: string) => void
           />
           {error && <p className="text-red-500 text-xs font-bold text-center">{error}</p>}
           <button type="submit" className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-transform">Ingresar</button>
+          <button type="button" onClick={onCancel} className="w-full py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold text-xs uppercase hover:bg-slate-200 transition-colors">Cancelar</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ProfilePasswordModal({ profile, onUnlock, onCancel }: { profile: ProfileItem; onUnlock: (pwd: string) => Promise<string | null>; onCancel: () => void }) {
+  const [pwd, setPwd] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6">
+      <div className="bg-white rounded-3xl p-8 shadow-2xl w-full max-w-sm">
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <User size={28} className="text-emerald-600" />
+          </div>
+          <h2 className="text-lg font-black text-slate-800 uppercase tracking-tighter">{profile.name}</h2>
+          <p className="text-xs text-slate-400 mt-1 font-medium">Ingresa tu clave de acceso</p>
+        </div>
+        <form onSubmit={async (e) => {
+          e.preventDefault();
+          setLoading(true);
+          setError('');
+          const err = await onUnlock(pwd);
+          if (err) {
+            setError(err);
+            setPwd('');
+          }
+          setLoading(false);
+        }} className="space-y-4">
+          <input
+            ref={inputRef}
+            type="password"
+            value={pwd}
+            onChange={(e) => { setPwd(e.target.value); setError(''); }}
+            placeholder="Tu clave"
+            className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-200 font-bold text-sm text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+          />
+          {error && <p className="text-red-500 text-xs font-bold text-center">{error}</p>}
+          <button type="submit" disabled={loading} className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black uppercase shadow-lg active:scale-95 transition-transform disabled:opacity-50">Ingresar</button>
           <button type="button" onClick={onCancel} className="w-full py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold text-xs uppercase hover:bg-slate-200 transition-colors">Cancelar</button>
         </form>
       </div>
@@ -5016,8 +5127,8 @@ export default function LagunaNorteApp() {
       {currentView === 'calendar' && (
         <CalendarPanel
           onBack={() => setCurrentView('main')}
-          workOrders={workOrders}
-          recurringItems={recurringItems}
+          workOrders={isProfileUser ? visibleWorkOrders : workOrders}
+          recurringItems={isProfileUser ? [] : recurringItems}
           workAreas={workAreas}
           userRole={userRole!}
         />

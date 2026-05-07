@@ -4,26 +4,32 @@ import { db } from '@/lib/db';
 function serializeProfile(row: {
   id: string;
   name: string;
+  password: string;
   workAreaIds: string[];
   createdAt: Date;
   updatedAt: Date;
-}) {
-  return {
+}, includePassword = false) {
+  const result: Record<string, unknown> = {
     id: row.id,
     name: row.name,
     workAreaIds: Array.isArray(row.workAreaIds) ? row.workAreaIds : [],
+    hasPassword: row.password !== '',
     createdAt: new Date(row.createdAt).getTime(),
     updatedAt: new Date(row.updatedAt).getTime(),
   };
+  if (includePassword) {
+    result.password = row.password;
+  }
+  return result;
 }
 
-// GET /api/profiles — return all profiles
+// GET /api/profiles — return all profiles (password excluded, hasPassword flag included)
 export async function GET() {
   try {
     const rows = await db.profile.findMany({
       orderBy: { name: 'asc' },
     });
-    const items = rows.map(serializeProfile);
+    const items = rows.map(r => serializeProfile(r, false));
     return NextResponse.json(items);
   } catch (error) {
     console.error('GET /api/profiles error:', error);
@@ -42,11 +48,12 @@ export async function POST(request: NextRequest) {
     const row = await db.profile.create({
       data: {
         name: body.name || '',
+        password: body.password || '',
         workAreaIds: Array.isArray(body.workAreaIds) ? body.workAreaIds : [],
       },
     });
 
-    return NextResponse.json(serializeProfile(row), { status: 201 });
+    return NextResponse.json(serializeProfile(row, false), { status: 201 });
   } catch (error) {
     console.error('POST /api/profiles error:', error);
     return NextResponse.json(

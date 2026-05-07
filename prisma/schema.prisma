@@ -55,6 +55,7 @@ model RecurringWorkOrder {
 model Profile {
   id          String   @id @default(cuid())
   name        String
+  password    String   @default("")
   workAreaIds String[] @default([])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
