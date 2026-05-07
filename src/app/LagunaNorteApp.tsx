@@ -4498,9 +4498,31 @@ function HamburgerMenu({
 
 /* ─── Profile Login Screen ─── */
 
-function ProfileLogin({ onLogin }: { onLogin: (role: UserRole) => void }) {
+function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => void; workAreas: WorkArea[] }) {
   const [showPwdModal, setShowPwdModal] = useState(false);
   const { profiles, loading: profilesLoading } = useProfiles();
+
+  // Map work area color classes to gradient + shadow + icon for profile buttons
+  const PROFILE_STYLE_MAP: Record<string, { gradient: string; shadow: string; icon: React.ElementType }> = {
+    'bg-green-600':  { gradient: 'from-green-600 to-green-700',  shadow: 'shadow-green-200', icon: Leaf },
+    'bg-pink-500':   { gradient: 'from-pink-500 to-pink-600',    shadow: 'shadow-pink-200',  icon: Brush },
+    'bg-orange-500': { gradient: 'from-orange-500 to-orange-600', shadow: 'shadow-orange-200', icon: Trash2 },
+    'bg-cyan-500':   { gradient: 'from-cyan-500 to-cyan-600',    shadow: 'shadow-cyan-200',  icon: Droplets },
+    'bg-purple-500': { gradient: 'from-purple-500 to-purple-600', shadow: 'shadow-purple-200', icon: Wrench },
+    'bg-yellow-500': { gradient: 'from-yellow-500 to-yellow-600', shadow: 'shadow-yellow-200', icon: Zap },
+  };
+  const DEFAULT_PROFILE_STYLE = { gradient: 'from-slate-500 to-slate-600', shadow: 'shadow-slate-200', icon: User };
+
+  // Resolve the primary work area for a profile (first one with a known style)
+  const getProfileStyle = (profile: ProfileItem) => {
+    for (const waId of profile.workAreaIds) {
+      const wa = workAreas.find(a => a.id === waId);
+      if (wa && PROFILE_STYLE_MAP[wa.color]) {
+        return PROFILE_STYLE_MAP[wa.color];
+      }
+    }
+    return DEFAULT_PROFILE_STYLE;
+  };
 
   return (
     <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex items-center justify-center p-6">
@@ -4533,24 +4555,28 @@ function ProfileLogin({ onLogin }: { onLogin: (role: UserRole) => void }) {
           {!profilesLoading && profiles.length > 0 && (
             <div className="space-y-2">
               <p className="text-center text-[9px] font-black text-slate-400 uppercase tracking-wider">Perfiles por Cargo</p>
-              {profiles.map(profile => (
-                <button
-                  key={profile.id}
-                  onClick={() => {
-                    localStorage.setItem(USER_ROLE_KEY, `profile:${profile.id}`);
-                    onLogin(`profile:${profile.id}`);
-                  }}
-                  className="w-full py-4 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-2xl font-black uppercase shadow-lg shadow-emerald-200 active:scale-95 transition-transform flex items-center justify-center gap-3"
-                >
-                  <User size={20} />
-                  <div className="text-left">
-                    <div className="text-sm">{profile.name}</div>
-                    <div className="text-[9px] font-semibold opacity-80">
-                      Solo ver, subir fotos y completar OTs
+              {profiles.map(profile => {
+                const style = getProfileStyle(profile);
+                const ProfileIcon = style.icon;
+                return (
+                  <button
+                    key={profile.id}
+                    onClick={() => {
+                      localStorage.setItem(USER_ROLE_KEY, `profile:${profile.id}`);
+                      onLogin(`profile:${profile.id}`);
+                    }}
+                    className={`w-full py-4 bg-gradient-to-r ${style.gradient} text-white rounded-2xl font-black uppercase shadow-lg ${style.shadow} active:scale-95 transition-transform flex items-center justify-center gap-3`}
+                  >
+                    <ProfileIcon size={22} />
+                    <div className="text-left">
+                      <div className="text-sm">{profile.name}</div>
+                      <div className="text-[9px] font-semibold opacity-80">
+                        Solo ver, subir fotos y completar OTs
+                      </div>
                     </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -4732,7 +4758,7 @@ export default function LagunaNorteApp() {
 
   // Show profile login if no role is selected
   if (!userRole) {
-    return <ProfileLogin onLogin={(role) => setUserRole(role)} />;
+    return <ProfileLogin onLogin={(role) => setUserRole(role)} workAreas={workAreas} />;
   }
 
   // Visible work orders: profile users can only see OTs from their assigned work areas
