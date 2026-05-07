@@ -207,6 +207,7 @@ const CONFIG_VERSION = 2; // Increment when default data changes to force reload
 const USER_ROLE_KEY = 'laguna_norte_user_role';
 const ADMIN_PWD_KEY = 'laguna_norte_admin_pwd';
 const DEFAULT_ADMIN_PWD = 'admin2024';
+const WORK_SCHEDULE_KEY = 'laguna_norte_work_schedule';
 
 type UserRole = 'admin' | `profile:${string}`;
 
@@ -216,6 +217,144 @@ function getAdminPwd(): string {
 
 function checkAdminPwd(pwd: string): boolean {
   return pwd === getAdminPwd();
+}
+
+/* ─── Work Schedule Configuration ─── */
+
+interface WorkSchedule {
+  startHour: number;   // e.g., 8 for 8:00 AM
+  startMinute: number; // e.g., 0
+  endHour: number;     // e.g., 18 for 6:00 PM
+  endMinute: number;   // e.g., 0
+  workDays: number[];  // 0=Sunday, 1=Monday, ..., 6=Saturday
+  enabled: boolean;    // Whether to use working hours calculation
+}
+
+const DEFAULT_WORK_SCHEDULE: WorkSchedule = {
+  startHour: 8,
+  startMinute: 0,
+  endHour: 18,
+  endMinute: 0,
+  workDays: [1, 2, 3, 4, 5], // Monday to Friday
+  enabled: true,
+};
+
+function loadWorkSchedule(): WorkSchedule {
+  try {
+    const raw = localStorage.getItem(WORK_SCHEDULE_KEY);
+    if (!raw) return DEFAULT_WORK_SCHEDULE;
+    return { ...DEFAULT_WORK_SCHEDULE, ...JSON.parse(raw) };
+  } catch {
+    return DEFAULT_WORK_SCHEDULE;
+  }
+}
+
+function saveWorkSchedule(schedule: WorkSchedule) {
+  try {
+    localStorage.setItem(WORK_SCHEDULE_KEY, JSON.stringify(schedule));
+  } catch { /* ignore */ }
+}
+
+/**
+ * Calculate the number of WORKING milliseconds between two timestamps,
+ * considering the configured work schedule (start hour, end hour, work days).
+ * Only counts time within the work window on work days.
+ * If working hours calculation is disabled, returns the raw difference.
+ */
+function calcWorkingMs(startMs: number, endMs: number, schedule: WorkSchedule): number {
+  if (!schedule.enabled) return endMs - startMs;
+  if (endMs <= startMs) return 0;
+
+  const workStartMin = schedule.startHour * 60 + schedule.startMinute; // e.g., 480 = 8:00
+  const workEndMin = schedule.endHour * 60 + schedule.endMinute;       // e.g., 1080 = 18:00
+  const workDayMs = (workEndMin - workStartMin) * 60 * 1000;          // ms per work day
+
+  let totalWorkingMs = 0;
+
+  // Iterate day by day from start to end
+  const startDate = new Date(startMs);
+  const endDate = new Date(endMs);
+
+  // Normalize to Chile timezone for day-of-week calculation
+  const chileStartStr = startDate.toLocaleString('en-US', { timeZone: 'America/Santiago' });
+  const chileEndStr = endDate.toLocaleString('en-US', { timeZone: 'America/Santiago' });
+
+  // Use a simpler approach: iterate through each day in the range
+  const startDay = new Date(startMs);
+  const endDay = new Date(endMs);
+
+  // Get Chile timezone dates
+  const chileStart = new Date(chileStartStr);
+  const chileEnd = new Date(chileEndStr);
+
+  // Iterate day by day (Chile time)
+  let current = new Date(chileStart.getFullYear(), chileStart.getMonth(), chileStart.getDate());
+  const lastDay = new Date(chileEnd.getFullYear(), chileEnd.getMonth(), chileEnd.getDate());
+
+  while (current <= lastDay) {
+    const dayOfWeek = current.getDay();
+    const isWorkDay = schedule.workDays.includes(dayOfWeek);
+
+    if (isWorkDay) {
+      // Calculate the work window for this day in Chile time
+      const dayWorkStart = new Date(current);
+      dayWorkStart.setHours(schedule.startHour, schedule.startMinute, 0, 0);
+      const dayWorkEnd = new Date(current);
+      dayWorkEnd.setHours(schedule.endHour, schedule.endMinute, 0, 0);
+
+      // Convert Chile times to actual ms (approximate)
+      // The offset between Chile and local time
+      const offsetMs = startMs - chileStart.getTime();
+      const actualWorkStart = dayWorkStart.getTime() + offsetMs;
+      const actualWorkEnd = dayWorkEnd.getTime() + offsetMs;
+
+      // Intersect with [startMs, endMs]
+      const effectiveStart = Math.max(startMs, actualWorkStart);
+      const effectiveEnd = Math.min(endMs, actualWorkEnd);
+
+      if (effectiveEnd > effectiveStart) {
+        totalWorkingMs += effectiveEnd - effectiveStart;
+      }
+    }
+
+    // Move to next day
+    current.setDate(current.getDate() + 1);
+  }
+
+  return totalWorkingMs;
+}
+
+/**
+ * Format a duration in ms, displaying in working-hours format when schedule is enabled.
+ * Shows hours and minutes within the work schedule context.
+ */
+function formatWorkingDuration(ms: number, schedule: WorkSchedule): string {
+  if (ms < 0) return '—';
+  if (!schedule.enabled) {
+    // Original 24h calculation
+    const minutes = Math.floor(ms / 60000);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    if (days > 0) return `${days}d ${hours % 24}h`;
+    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    return `${minutes}m`;
+  }
+
+  // Working hours calculation
+  const workStartMin = schedule.startHour * 60 + schedule.startMinute;
+  const workEndMin = schedule.endHour * 60 + schedule.endMinute;
+  const minsPerWorkDay = workEndMin - workStartMin; // e.g., 600 minutes = 10 hours
+  const msPerWorkDay = minsPerWorkDay * 60 * 1000;
+
+  const totalWorkMinutes = Math.floor(ms / 60000);
+  const workDays = Math.floor(totalWorkMinutes / minsPerWorkDay);
+  const remainingMinutes = totalWorkMinutes % minsPerWorkDay;
+  const workHours = Math.floor(remainingMinutes / 60);
+  const workMins = remainingMinutes % 60;
+
+  if (workDays > 0) return `${workDays}dj ${workHours}h ${workMins}m`;
+  if (workHours > 0) return `${workHours}h ${workMins}m`;
+  return `${workMins}m`;
 }
 
 function readFromLocalStorage(): WorkOrder[] {
@@ -1155,6 +1294,221 @@ function PhotoUpload({
 
 /* ─── Security Tab Component ─── */
 
+/* ─── Work Schedule Tab Component ─── */
+
+function WorkScheduleTab() {
+  const [schedule, setSchedule] = useState<WorkSchedule>(() => loadWorkSchedule());
+  const [msg, setMsg] = useState('');
+
+  const handleSave = () => {
+    saveWorkSchedule(schedule);
+    setMsg('Horario guardado correctamente');
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  const handleReset = () => {
+    setSchedule(DEFAULT_WORK_SCHEDULE);
+    saveWorkSchedule(DEFAULT_WORK_SCHEDULE);
+    setMsg('Horario restaurado a valores predeterminados');
+    setTimeout(() => setMsg(''), 3000);
+  };
+
+  const toggleWorkDay = (day: number) => {
+    setSchedule(prev => ({
+      ...prev,
+      workDays: prev.workDays.includes(day)
+        ? prev.workDays.filter(d => d !== day)
+        : [...prev.workDays, day].sort(),
+    }));
+  };
+
+  const DAY_LABELS = [
+    { value: 0, label: 'Domingo', short: 'D' },
+    { value: 1, label: 'Lunes', short: 'L' },
+    { value: 2, label: 'Martes', short: 'M' },
+    { value: 3, label: 'Miércoles', short: 'X' },
+    { value: 4, label: 'Jueves', short: 'J' },
+    { value: 5, label: 'Viernes', short: 'V' },
+    { value: 6, label: 'Sábado', short: 'S' },
+  ];
+
+  const formatHour = (h: number, m: number) => {
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
+  const workHoursPerDay = (schedule.endHour * 60 + schedule.endMinute - schedule.startHour * 60 - schedule.startMinute) / 60;
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-2">
+        <Clock size={20} className="text-blue-600" />
+        <div>
+          <p className="font-black text-slate-800 text-sm uppercase">Horario Laboral</p>
+          <p className="text-[9px] text-slate-400 font-medium">Configura el horario para el cálculo de tiempos de OT</p>
+        </div>
+      </div>
+
+      {/* Enable/Disable Toggle */}
+      <div className="bg-slate-50 rounded-2xl p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-black text-slate-800">Cálculo por horas hábiles</p>
+            <p className="text-[9px] text-slate-400 font-medium mt-0.5">
+              {schedule.enabled
+                ? `Solo cuenta tiempo entre ${formatHour(schedule.startHour, schedule.startMinute)} y ${formatHour(schedule.endHour, schedule.endMinute)} en días hábiles`
+                : 'Cuenta tiempo completo 24/7 (incluye noches y fines de semana)'}
+            </p>
+          </div>
+          <button
+            onClick={() => setSchedule(prev => ({ ...prev, enabled: !prev.enabled }))}
+            className={`w-14 h-7 rounded-full transition-colors ${schedule.enabled ? 'bg-blue-600' : 'bg-slate-300'}`}
+          >
+            <div className={`w-5 h-5 bg-white rounded-full shadow-md transition-transform ${schedule.enabled ? 'translate-x-8' : 'translate-x-1'}`} />
+          </button>
+        </div>
+      </div>
+
+      {/* Schedule Configuration */}
+      {schedule.enabled && (
+        <>
+          {/* Work Hours */}
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 space-y-4">
+            <p className="text-[10px] font-black text-blue-600 uppercase">Horario de Trabajo</p>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Hora inicio</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <select
+                    value={schedule.startHour}
+                    onChange={e => setSchedule(prev => ({ ...prev, startHour: parseInt(e.target.value) }))}
+                    className="flex-1 p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
+                  >
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                    ))}
+                  </select>
+                  <span className="text-slate-400 font-bold">:</span>
+                  <select
+                    value={schedule.startMinute}
+                    onChange={e => setSchedule(prev => ({ ...prev, startMinute: parseInt(e.target.value) }))}
+                    className="flex-1 p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
+                  >
+                    <option value={0}>00</option>
+                    <option value={15}>15</option>
+                    <option value={30}>30</option>
+                    <option value={45}>45</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Hora término</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <select
+                    value={schedule.endHour}
+                    onChange={e => setSchedule(prev => ({ ...prev, endHour: parseInt(e.target.value) }))}
+                    className="flex-1 p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
+                  >
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                    ))}
+                  </select>
+                  <span className="text-slate-400 font-bold">:</span>
+                  <select
+                    value={schedule.endMinute}
+                    onChange={e => setSchedule(prev => ({ ...prev, endMinute: parseInt(e.target.value) }))}
+                    className="flex-1 p-3 rounded-xl bg-white border border-slate-200 font-bold text-sm"
+                  >
+                    <option value={0}>00</option>
+                    <option value={15}>15</option>
+                    <option value={30}>30</option>
+                    <option value={45}>45</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl p-3 flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500">Horas hábiles por día</span>
+              <span className="text-lg font-black text-blue-600">{workHoursPerDay}h</span>
+            </div>
+          </div>
+
+          {/* Work Days */}
+          <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 space-y-3">
+            <p className="text-[10px] font-black text-emerald-600 uppercase">Días Hábiles</p>
+            <div className="grid grid-cols-7 gap-2">
+              {DAY_LABELS.map(day => {
+                const isActive = schedule.workDays.includes(day.value);
+                return (
+                  <button
+                    key={day.value}
+                    onClick={() => toggleWorkDay(day.value)}
+                    className={`p-2 rounded-xl text-center transition-all ${
+                      isActive
+                        ? 'bg-emerald-500 text-white shadow-md'
+                        : 'bg-white text-slate-400 border border-slate-200'
+                    }`}
+                  >
+                    <span className="text-sm font-black">{day.short}</span>
+                    <span className="block text-[6px] font-bold uppercase mt-0.5">{day.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="bg-white rounded-xl p-3 flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500">Días hábiles por semana</span>
+              <span className="text-lg font-black text-emerald-600">{schedule.workDays.length}</span>
+            </div>
+          </div>
+
+          {/* Summary */}
+          <div className="bg-violet-50 border border-violet-100 rounded-2xl p-4">
+            <p className="text-[10px] font-black text-violet-600 uppercase mb-2">Resumen</p>
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-500 font-medium">Horario</span>
+                <span className="text-slate-700 font-black">{formatHour(schedule.startHour, schedule.startMinute)} - {formatHour(schedule.endHour, schedule.endMinute)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-500 font-medium">Horas/día</span>
+                <span className="text-slate-700 font-black">{workHoursPerDay}h</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-500 font-medium">Días/semana</span>
+                <span className="text-slate-700 font-black">{schedule.workDays.length}</span>
+              </div>
+              <div className="flex justify-between text-xs border-t border-violet-200 pt-1.5">
+                <span className="text-violet-600 font-bold">Horas hábiles/semana</span>
+                <span className="text-violet-700 font-black">{(workHoursPerDay * schedule.workDays.length).toFixed(1)}h</span>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Save/Reset Buttons */}
+      <div className="flex gap-2">
+        <button
+          onClick={handleSave}
+          className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase active:scale-95 transition-transform"
+        >
+          Guardar Horario
+        </button>
+        <button
+          onClick={handleReset}
+          className="py-3 px-4 bg-slate-200 text-slate-600 rounded-xl font-black text-[10px] uppercase active:scale-95 transition-transform"
+        >
+          Restaurar
+        </button>
+      </div>
+
+      {msg && <p className="text-emerald-500 text-xs font-bold text-center">{msg}</p>}
+    </div>
+  );
+}
+
 function SecurityTab() {
   const [currentPwd, setCurrentPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
@@ -1208,7 +1562,7 @@ function SecurityTab() {
 
 /* ─── Admin Panel Component ─── */
 
-type AdminTab = 'areas' | 'personal' | 'zonas' | 'seguridad' | 'profiles';
+type AdminTab = 'areas' | 'personal' | 'zonas' | 'seguridad' | 'profiles' | 'horario';
 
 function AdminPanel({
   isOpen,
@@ -1425,6 +1779,7 @@ function AdminPanel({
     { key: 'personal', label: 'Personal' },
     { key: 'zonas', label: 'Zonas' },
     { key: 'profiles', label: 'Perfiles' },
+    { key: 'horario', label: 'Horario' },
     { key: 'seguridad', label: 'Clave' },
   ];
 
@@ -1695,6 +2050,7 @@ function AdminPanel({
             </>
           )}
 
+          {activeTab === 'horario' && <WorkScheduleTab />}
           {activeTab === 'seguridad' && <SecurityTab />}
 
           {/* ─── Profiles Tab ─── */}
@@ -2114,6 +2470,7 @@ function ModalInner({
   userRole: UserRole;
   permissions?: string[];
 }) {
+  const schedule = loadWorkSchedule();
   const [form, setForm] = useState(() => {
     // Try to infer work area from editing item's activities
     let initialWorkAreaId = '';
@@ -2461,24 +2818,24 @@ function ModalInner({
                   <div className="pt-1.5 border-t border-slate-200">
                     <div className="flex justify-between items-center">
                       <span className="text-[8px] font-bold text-slate-400">Tiempo de espera</span>
-                      <span className="text-[9px] font-black text-red-500">{formatDuration(editingItem.startedAt - (editingItem.createdAt ?? 0))}</span>
+                      <span className="text-[9px] font-black text-red-500">{formatWorkingDuration(calcWorkingMs(editingItem.createdAt ?? 0, editingItem.startedAt!, schedule), schedule)}</span>
                     </div>
                     {editingItem.completedAt && (
                       <>
                         <div className="flex justify-between items-center mt-1">
                           <span className="text-[8px] font-bold text-slate-400">Tiempo de proceso</span>
-                          <span className="text-[9px] font-black text-amber-500">{formatDuration(editingItem.completedAt - editingItem.startedAt)}</span>
+                          <span className="text-[9px] font-black text-amber-500">{formatWorkingDuration(calcWorkingMs(editingItem.startedAt!, editingItem.completedAt!, schedule), schedule)}</span>
                         </div>
                         <div className="flex justify-between items-center mt-1">
                           <span className="text-[8px] font-bold text-slate-400">Tiempo total</span>
-                          <span className="text-[9px] font-black text-emerald-500">{formatDuration(editingItem.completedAt - (editingItem.createdAt ?? 0))}</span>
+                          <span className="text-[9px] font-black text-emerald-500">{formatWorkingDuration(calcWorkingMs(editingItem.createdAt ?? 0, editingItem.completedAt!, schedule), schedule)}</span>
                         </div>
                       </>
                     )}
                     {!editingItem.completedAt && (
                       <div className="flex justify-between items-center mt-1">
                         <span className="text-[8px] font-bold text-slate-400">En proceso durante</span>
-                        <span className="text-[9px] font-black text-amber-500">{formatDuration(Date.now() - editingItem.startedAt)}</span>
+                        <span className="text-[9px] font-black text-amber-500">{formatWorkingDuration(calcWorkingMs(editingItem.startedAt!, Date.now(), schedule), schedule)}</span>
                       </div>
                     )}
                   </div>
@@ -2882,6 +3239,7 @@ function AdminDashboard({
   workAreas: WorkArea[];
   personnel: Personnel[];
 }) {
+  const schedule = loadWorkSchedule();
   const [dashTab, setDashTab] = useState<'resumen' | 'personal' | 'areas' | 'detalle' | 'exportar'>('resumen');
   // Filter state
   const [filterArea, setFilterArea] = useState<string>('todas');
@@ -2932,18 +3290,18 @@ function AdminDashboard({
   // Average times for completed orders (use startedAt if available, fallback to createdAt)
   const completedWithTimes = completedOrders.filter(o => o.completedAt);
   const avgWaitTime = completedWithTimes.length > 0
-    ? completedWithTimes.reduce((sum, o) => sum + (((o.startedAt ?? o.createdAt) - o.createdAt) || 0), 0) / completedWithTimes.length
+    ? completedWithTimes.reduce((sum, o) => sum + calcWorkingMs(o.createdAt, o.startedAt ?? o.createdAt, schedule), 0) / completedWithTimes.length
     : 0;
   const avgProcessTime = completedWithTimes.length > 0
-    ? completedWithTimes.reduce((sum, o) => sum + ((o.completedAt! - (o.startedAt ?? o.createdAt)) || 0), 0) / completedWithTimes.length
+    ? completedWithTimes.reduce((sum, o) => sum + calcWorkingMs(o.startedAt ?? o.createdAt, o.completedAt!, schedule), 0) / completedWithTimes.length
     : 0;
   const avgTotalTime = completedWithTimes.length > 0
-    ? completedWithTimes.reduce((sum, o) => sum + ((o.completedAt! - o.createdAt) || 0), 0) / completedWithTimes.length
+    ? completedWithTimes.reduce((sum, o) => sum + calcWorkingMs(o.createdAt, o.completedAt!, schedule), 0) / completedWithTimes.length
     : 0;
 
   // Currently in-process duration (use startedAt if available, fallback to createdAt)
   const avgCurrentProcessTime = inProcessOrders.length > 0
-    ? inProcessOrders.reduce((sum, o) => sum + ((now - (o.startedAt ?? o.createdAt)) || 0), 0) / inProcessOrders.length
+    ? inProcessOrders.reduce((sum, o) => sum + calcWorkingMs(o.startedAt ?? o.createdAt, now, schedule), 0) / inProcessOrders.length
     : 0;
 
   // Per-personnel metrics (on filtered data)
@@ -2956,10 +3314,10 @@ function AdminDashboard({
     const pendingByPerson = personOrders.filter(o => o.status === 'Pendiente');
 
     const avgTime = completedByPerson.length > 0
-      ? completedByPerson.reduce((sum, o) => sum + ((o.completedAt! - (o.startedAt ?? o.createdAt)) || 0), 0) / completedByPerson.length
+      ? completedByPerson.reduce((sum, o) => sum + calcWorkingMs(o.startedAt ?? o.createdAt, o.completedAt!, schedule), 0) / completedByPerson.length
       : 0;
 
-    const totalTime = completedByPerson.reduce((sum, o) => sum + ((o.completedAt! - (o.startedAt ?? o.createdAt)) || 0), 0);
+    const totalTime = completedByPerson.reduce((sum, o) => sum + calcWorkingMs(o.startedAt ?? o.createdAt, o.completedAt!, schedule), 0);
 
     return {
       id: p.id,
@@ -2985,7 +3343,7 @@ function AdminDashboard({
     const pendingArea = areaOrders.filter(o => o.status === 'Pendiente');
 
     const avgTime = completedArea.length > 0
-      ? completedArea.reduce((sum, o) => sum + ((o.completedAt! - (o.startedAt ?? o.createdAt)) || 0), 0) / completedArea.length
+      ? completedArea.reduce((sum, o) => sum + calcWorkingMs(o.startedAt ?? o.createdAt, o.completedAt!, schedule), 0) / completedArea.length
       : 0;
 
     return {
@@ -3005,9 +3363,9 @@ function AdminDashboard({
     .map(o => {
       const wa = workAreas.find(wa => o.activities.some(a => wa.activities.includes(a)));
       const effectiveStartedAt = o.startedAt ?? (o.status === 'En Proceso' || o.status === 'Terminada' ? o.createdAt : null);
-      const processTime = o.completedAt && effectiveStartedAt ? o.completedAt - effectiveStartedAt : (o.status === 'En Proceso' && effectiveStartedAt ? now - effectiveStartedAt : 0);
-      const waitTime = effectiveStartedAt ? effectiveStartedAt - o.createdAt : 0;
-      const totalTime = o.completedAt ? o.completedAt - o.createdAt : (o.status === 'En Proceso' ? now - o.createdAt : 0);
+      const processTime = o.completedAt && effectiveStartedAt ? calcWorkingMs(effectiveStartedAt, o.completedAt, schedule) : (o.status === 'En Proceso' && effectiveStartedAt ? calcWorkingMs(effectiveStartedAt, now, schedule) : 0);
+      const waitTime = effectiveStartedAt ? calcWorkingMs(o.createdAt, effectiveStartedAt, schedule) : 0;
+      const totalTime = o.completedAt ? calcWorkingMs(o.createdAt, o.completedAt, schedule) : (o.status === 'En Proceso' ? calcWorkingMs(o.createdAt, now, schedule) : 0);
       return { ...o, wa, processTime, waitTime, totalTime, effectiveStartedAt };
     })
     .sort((a, b) => b.createdAt - a.createdAt);
@@ -3030,9 +3388,9 @@ function AdminDashboard({
         o.startedAt ? new Date(o.startedAt).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }) : '',
         o.completedAt ? formatDate(o.completedAt) : '',
         o.completedAt ? new Date(o.completedAt).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }) : '',
-        o.startedAt ? formatDuration(o.startedAt - o.createdAt) : '',
-        o.startedAt && o.completedAt ? formatDuration(o.completedAt - o.startedAt) : '',
-        o.completedAt ? formatDuration(o.completedAt - o.createdAt) : '',
+        o.startedAt ? formatWorkingDuration(calcWorkingMs(o.createdAt, o.startedAt, schedule), schedule) : '',
+        o.startedAt && o.completedAt ? formatWorkingDuration(calcWorkingMs(o.startedAt, o.completedAt!, schedule), schedule) : '',
+        o.completedAt ? formatWorkingDuration(calcWorkingMs(o.createdAt, o.completedAt!, schedule), schedule) : '',
         `"${(o.description ?? '').replace(/"/g, '""')}"`,
       ].join(',');
     });
@@ -3059,8 +3417,8 @@ function AdminDashboard({
       pm.totalOrders,
       pm.completedOrders,
       pm.inProcessOrders,
-      pm.avgTime > 0 ? formatDuration(pm.avgTime) : '',
-      pm.totalTime > 0 ? formatDuration(pm.totalTime) : '',
+      pm.avgTime > 0 ? formatWorkingDuration(pm.avgTime, schedule) : '',
+      pm.totalTime > 0 ? formatWorkingDuration(pm.totalTime, schedule) : '',
     ].join(','));
     const csv = BOM + headers.join(',') + '\n' + rows.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -3082,7 +3440,7 @@ function AdminDashboard({
       am.pending,
       am.inProcess,
       am.completed,
-      am.avgTime > 0 ? formatDuration(am.avgTime) : '',
+      am.avgTime > 0 ? formatWorkingDuration(am.avgTime, schedule) : '',
     ].join(','));
     const csv = BOM + headers.join(',') + '\n' + rows.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -3126,8 +3484,8 @@ function AdminDashboard({
     doc.text(`En Proceso: ${inProcessOrders.length}`, m + 130, y + 15);
     doc.text(`Terminadas: ${completedOrders.length}`, m + 250, y + 15);
     doc.text(`Eficiencia: ${filteredOrders.length > 0 ? Math.round((completedOrders.length / filteredOrders.length) * 100) : 0}%`, m + 380, y + 15);
-    if (avgProcessTime > 0) doc.text(`Prom Proceso: ${formatDuration(avgProcessTime)}`, m + 490, y + 15);
-    if (avgWaitTime > 0) doc.text(`Prom Espera: ${formatDuration(avgWaitTime)}`, m + 490, y + 28);
+    if (avgProcessTime > 0) doc.text(`Prom Proceso: ${formatWorkingDuration(avgProcessTime, schedule)}`, m + 490, y + 15);
+    if (avgWaitTime > 0) doc.text(`Prom Espera: ${formatWorkingDuration(avgWaitTime, schedule)}`, m + 490, y + 28);
 
     y += 50;
 
@@ -3162,8 +3520,8 @@ function AdminDashboard({
         formatDateTime(o.createdAt),
         formatDateTime(o.startedAt),
         formatDateTime(o.completedAt),
-        o.startedAt ? formatDuration(o.startedAt - o.createdAt) : '',
-        o.startedAt && o.completedAt ? formatDuration(o.completedAt - o.startedAt) : '',
+        o.startedAt ? formatWorkingDuration(calcWorkingMs(o.createdAt, o.startedAt, schedule), schedule) : '',
+        o.startedAt && o.completedAt ? formatWorkingDuration(calcWorkingMs(o.startedAt, o.completedAt!, schedule), schedule) : '',
       ];
       row.forEach((val, i) => {
         const maxW = cols[i] - 6;
@@ -3353,7 +3711,7 @@ function AdminDashboard({
                     <span className="text-[8px] font-black text-amber-400 uppercase">En Proceso</span>
                   </div>
                   <p className="text-2xl font-black text-amber-600">{inProcessOrders.length}</p>
-                  <p className="text-[8px] text-amber-400 font-medium mt-1">Prom: {formatDuration(avgCurrentProcessTime)}</p>
+                  <p className="text-[8px] text-amber-400 font-medium mt-1">Prom: {formatWorkingDuration(avgCurrentProcessTime, schedule)}</p>
                 </div>
                 <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-3">
                   <div className="flex items-center gap-2 mb-1">
@@ -3381,21 +3739,21 @@ function AdminDashboard({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-500">Espera (creacion - inicio)</span>
-                    <span className="text-sm font-black text-red-600">{formatDuration(avgWaitTime)}</span>
+                    <span className="text-sm font-black text-red-600">{formatWorkingDuration(avgWaitTime, schedule)}</span>
                   </div>
                   <div className="w-full bg-slate-200 rounded-full h-2">
                     <div className="bg-red-400 h-2 rounded-full" style={{ width: `${Math.min(100, (avgWaitTime / Math.max(avgTotalTime, 1)) * 100)}%` }}></div>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-500">Proceso (inicio - termino)</span>
-                    <span className="text-sm font-black text-amber-600">{formatDuration(avgProcessTime)}</span>
+                    <span className="text-sm font-black text-amber-600">{formatWorkingDuration(avgProcessTime, schedule)}</span>
                   </div>
                   <div className="w-full bg-slate-200 rounded-full h-2">
                     <div className="bg-amber-400 h-2 rounded-full" style={{ width: `${Math.min(100, (avgProcessTime / Math.max(avgTotalTime, 1)) * 100)}%` }}></div>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-500">Total (creacion - termino)</span>
-                    <span className="text-sm font-black text-emerald-600">{formatDuration(avgTotalTime)}</span>
+                    <span className="text-sm font-black text-emerald-600">{formatWorkingDuration(avgTotalTime, schedule)}</span>
                   </div>
                   <div className="w-full bg-slate-200 rounded-full h-2">
                     <div className="bg-emerald-400 h-2 rounded-full" style={{ width: '100%' }}></div>
@@ -3454,7 +3812,7 @@ function AdminDashboard({
                       <p className="text-[7px] font-bold text-slate-400">En Proceso</p>
                     </div>
                     <div className="bg-white rounded-xl p-2">
-                      <p className="text-xs font-black text-blue-600">{pm.avgTime > 0 ? formatDuration(pm.avgTime) : '--'}</p>
+                      <p className="text-xs font-black text-blue-600">{pm.avgTime > 0 ? formatWorkingDuration(pm.avgTime, schedule) : '--'}</p>
                       <p className="text-[7px] font-bold text-slate-400">Prom/OT</p>
                     </div>
                   </div>
@@ -3462,7 +3820,7 @@ function AdminDashboard({
                     <div className="mt-2">
                       <div className="flex items-center justify-between text-[8px] font-bold text-slate-400 mb-1">
                         <span>Tiempo total trabajado</span>
-                        <span className="text-slate-600">{formatDuration(pm.totalTime)}</span>
+                        <span className="text-slate-600">{formatWorkingDuration(pm.totalTime, schedule)}</span>
                       </div>
                       <div className="w-full bg-slate-200 rounded-full h-1.5">
                         <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${Math.min(100, (pm.avgTime / Math.max(avgProcessTime, 1)) * 100)}%` }}></div>
@@ -3512,7 +3870,7 @@ function AdminDashboard({
                       <p className="text-[6px] font-bold text-slate-400 uppercase">Term</p>
                     </div>
                     <div className="bg-white rounded-lg p-1.5">
-                      <p className="text-[10px] font-black text-blue-600">{am.avgTime > 0 ? formatDuration(am.avgTime) : '--'}</p>
+                      <p className="text-[10px] font-black text-blue-600">{am.avgTime > 0 ? formatWorkingDuration(am.avgTime, schedule) : '--'}</p>
                       <p className="text-[6px] font-bold text-slate-400 uppercase">Prom</p>
                     </div>
                   </div>
@@ -3559,7 +3917,7 @@ function AdminDashboard({
                         {!ot.startedAt && ot.status !== 'Pendiente' && (
                           <p className="text-[7px] text-amber-400 font-medium italic">Hora no registrada, se usa fecha de creación</p>
                         )}
-                        <p className="text-[8px] text-slate-400 font-medium">Espera: {formatDuration((ot.startedAt ?? ot.createdAt) - ot.createdAt)}</p>
+                        <p className="text-[8px] text-slate-400 font-medium">Espera: {formatWorkingDuration(ot.waitTime, schedule)}</p>
                       </div>
                     )}
                     {ot.completedAt && (
@@ -3567,7 +3925,7 @@ function AdminDashboard({
                         <div className="absolute -left-[17px] top-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"></div>
                         <p className="text-[8px] font-black text-emerald-500 uppercase">Terminada</p>
                         <p className="text-[10px] font-bold text-slate-600">{formatDateTime(ot.completedAt)}</p>
-                        <p className="text-[8px] text-slate-400 font-medium">Proceso: {formatDuration(ot.processTime)}</p>
+                        <p className="text-[8px] text-slate-400 font-medium">Proceso: {formatWorkingDuration(ot.processTime, schedule)}</p>
                       </div>
                     )}
                   </div>
@@ -3576,17 +3934,17 @@ function AdminDashboard({
                   <div className="mt-2 flex gap-2">
                     {ot.waitTime > 0 && (
                       <span className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[8px] font-black">
-                        Espera: {formatDuration(ot.waitTime)}
+                        Espera: {formatWorkingDuration(ot.waitTime, schedule)}
                       </span>
                     )}
                     {ot.processTime > 0 && (
                       <span className="px-2 py-1 bg-amber-50 text-amber-500 rounded-lg text-[8px] font-black">
-                        Proceso: {formatDuration(ot.processTime)}
+                        Proceso: {formatWorkingDuration(ot.processTime, schedule)}
                       </span>
                     )}
                     {ot.totalTime > 0 && (
                       <span className="px-2 py-1 bg-emerald-50 text-emerald-500 rounded-lg text-[8px] font-black">
-                        Total: {formatDuration(ot.totalTime)}
+                        Total: {formatWorkingDuration(ot.totalTime, schedule)}
                       </span>
                     )}
                   </div>
@@ -5823,7 +6181,7 @@ export default function LagunaNorteApp() {
                                 )}
                                 {userRole === 'admin' && ot.startedAt && (
                                   <span className="text-[8px] text-amber-400 font-bold flex items-center gap-0.5">
-                                    <Timer size={8} /> {formatDuration((ot.completedAt || Date.now()) - ot.startedAt)}
+                                    <Timer size={8} /> {formatWorkingDuration(calcWorkingMs(ot.startedAt!, ot.completedAt || Date.now(), loadWorkSchedule()), loadWorkSchedule())}
                                   </span>
                                 )}
                               </div>
