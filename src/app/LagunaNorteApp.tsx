@@ -6804,8 +6804,18 @@ export default function LagunaNorteApp() {
     return <ProfileLogin onLogin={(role) => setUserRole(role)} workAreas={workAreas} />;
   }
 
-  // Guardia profile: go directly to scanner, no navigation needed
-  if (isGuardia && !isSupervisor && currentProfile) {
+  // Guardia-only profile: render scanner directly, nothing else
+  // This check is very specific: ONLY profiles whose ONLY special permission is 'guardia'
+  // Profiles with guardia + supervisor, or guardia + create, etc. get the normal UI
+  const isGuardiaOnly = isProfileUser
+    && isGuardia
+    && !isSupervisor
+    && !profilePerms.includes('create')
+    && !profilePerms.includes('edit')
+    && !profilePerms.includes('delete')
+    && currentProfile;
+
+  if (isGuardiaOnly && currentProfile) {
     return (
       <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex flex-col">
         <QrScannerView
@@ -6868,11 +6878,9 @@ export default function LagunaNorteApp() {
       {/* ─── Header ─── */}
       <header className="p-4 bg-white border-b border-slate-100 sticky top-0 z-40 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
-          {!isGuardia && (
-            <button onClick={() => setMenuOpen(true)} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
-              <Menu size={20} className="text-slate-600" />
-            </button>
-          )}
+          <button onClick={() => setMenuOpen(true)} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+            <Menu size={20} className="text-slate-600" />
+          </button>
           <img src="/logo-laguna.jpg" alt="Laguna Norte" className="h-10 rounded-lg" />
           <div>
             <h1 className="text-sm font-black text-slate-800 uppercase tracking-tighter leading-none">Laguna Norte</h1>
