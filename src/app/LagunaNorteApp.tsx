@@ -5906,10 +5906,12 @@ function QrScannerView({
   onBack,
   profileName,
   profileId,
+  isGuardiaMode = false,
 }: {
   onBack: () => void;
   profileName: string;
   profileId: string;
+  isGuardiaMode?: boolean;
 }) {
   const [scanning, setScanning] = useState(false);
   const [lastScan, setLastScan] = useState<QrScanItem | null>(null);
@@ -6038,13 +6040,29 @@ function QrScannerView({
     <div className="flex-1 flex flex-col">
       {/* Header */}
       <div className="sticky top-0 z-30 bg-white border-b border-slate-100 p-4 flex items-center gap-3">
-        <button onClick={() => { stopScanner(); onBack(); }} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
-          <ChevronLeft size={20} className="text-slate-600" />
-        </button>
-        <div className="flex-1">
-          <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Escanear QR</h2>
-          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{profileName}</p>
-        </div>
+        {isGuardiaMode ? (
+          <div className="flex-1">
+            <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
+              <Scan size={16} className="text-teal-500" /> Escanear QR
+            </h2>
+            <p className="text-[8px] font-black text-teal-500 uppercase tracking-widest">{profileName}</p>
+          </div>
+        ) : (
+          <>
+            <button onClick={() => { stopScanner(); onBack(); }} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+              <ChevronLeft size={20} className="text-slate-600" />
+            </button>
+            <div className="flex-1">
+              <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Escanear QR</h2>
+              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{profileName}</p>
+            </div>
+          </>
+        )}
+        {isGuardiaMode && (
+          <button onClick={() => { stopScanner(); onBack(); }} className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-500 rounded-xl text-[9px] font-black uppercase hover:bg-red-100 transition-colors active:scale-95">
+            <LogOut size={14} /> Salir
+          </button>
+        )}
       </div>
 
       <div className="p-4 space-y-4 pb-20">
@@ -6786,6 +6804,23 @@ export default function LagunaNorteApp() {
     return <ProfileLogin onLogin={(role) => setUserRole(role)} workAreas={workAreas} />;
   }
 
+  // Guardia profile: go directly to scanner, no navigation needed
+  if (isGuardia && !isSupervisor && currentProfile) {
+    return (
+      <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex flex-col">
+        <QrScannerView
+          onBack={() => {
+            localStorage.removeItem(USER_ROLE_KEY);
+            setUserRole(null);
+          }}
+          profileName={currentProfile.name}
+          profileId={currentProfile.id}
+          isGuardiaMode={true}
+        />
+      </div>
+    );
+  }
+
   // Visible work orders: visibility depends on role
   // Admin: sees everything
   // Supervisor profile: sees everything (all statuses, all areas)
@@ -6833,9 +6868,11 @@ export default function LagunaNorteApp() {
       {/* ─── Header ─── */}
       <header className="p-4 bg-white border-b border-slate-100 sticky top-0 z-40 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
-          <button onClick={() => setMenuOpen(true)} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
-            <Menu size={20} className="text-slate-600" />
-          </button>
+          {!isGuardia && (
+            <button onClick={() => setMenuOpen(true)} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors active:scale-95">
+              <Menu size={20} className="text-slate-600" />
+            </button>
+          )}
           <img src="/logo-laguna.jpg" alt="Laguna Norte" className="h-10 rounded-lg" />
           <div>
             <h1 className="text-sm font-black text-slate-800 uppercase tracking-tighter leading-none">Laguna Norte</h1>
