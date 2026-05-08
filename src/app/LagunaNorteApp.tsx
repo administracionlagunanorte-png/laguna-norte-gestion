@@ -6834,15 +6834,20 @@ export default function LagunaNorteApp() {
   // Visible work orders: visibility depends on role
   // Admin: sees everything
   // Supervisor profile: sees everything (all statuses, all areas)
-  // Other profiles: only see "En Proceso" OTs from their assigned work areas
+  // Other profiles: see OTs from their assigned work areas
+  //   - With create/edit/delete: see Pendiente + En Proceso (they need to manage them)
+  //   - View only: see only En Proceso (they just complete/report)
   const visibleWorkOrders = (() => {
     if (userRole === 'admin') return workOrders;
     if (isProfileUser && currentProfile) {
       // Supervisor profile: sees all OTs in all statuses
       if (isSupervisor) return workOrders;
-      // Regular profile: only "En Proceso" OTs from their assigned work areas
+      // Determine which statuses this profile can see
+      const canManage = profilePerms.includes('create') || profilePerms.includes('edit') || profilePerms.includes('delete');
+      const allowedStatuses = canManage ? ['Pendiente', 'En Proceso'] : ['En Proceso'];
+      // Filter by work area and allowed statuses
       return workOrders.filter(ot => {
-        if (ot.status !== 'En Proceso') return false;
+        if (!allowedStatuses.includes(ot.status)) return false;
         for (const waId of currentProfile.workAreaIds) {
           const wa = workAreas.find(a => a.id === waId);
           if (wa && ot.activities.some(a => wa.activities.includes(a))) {
@@ -6866,12 +6871,16 @@ export default function LagunaNorteApp() {
 
   // Available filters based on role
   // Admin & Supervisor: all filters
-  // Regular profiles: only "Todas" and "En Proceso" (they can't see Pendiente/Terminada)
+  // Profiles with create/edit/delete: Todas + Pendiente + En Proceso (they can manage those)
+  // View-only profiles: only "Todas" and "En Proceso"
+  const profileCanManage = isProfileUser && (profilePerms.includes('create') || profilePerms.includes('edit') || profilePerms.includes('delete'));
   const availableFilters: StatusFilter[] = (userRole === 'admin' || isSupervisor)
     ? ['Todas', 'Pendiente', 'En Proceso', 'Terminada']
-    : isProfileUser
-      ? ['Todas', 'En Proceso']
-      : ['Todas', 'Pendiente', 'En Proceso'];
+    : profileCanManage
+      ? ['Todas', 'Pendiente', 'En Proceso']
+      : isProfileUser
+        ? ['Todas', 'En Proceso']
+        : ['Todas', 'Pendiente', 'En Proceso'];
 
   return (
     <div className="max-w-xl mx-auto min-h-screen bg-slate-50 flex flex-col">
