@@ -1796,6 +1796,7 @@ function AdminPanel({
 
   const PERMISSION_OPTIONS = [
     { value: 'view', label: 'Visualizar', desc: 'Ver OTs, subir fotos y completar', color: 'bg-blue-500' },
+    { value: 'guardia', label: 'Guardia', desc: 'Escanear QRs de ubicaciones y registrar rondas', color: 'bg-teal-500' },
     { value: 'supervisor', label: 'Supervisor', desc: 'Ve TODAS las OTs (pendientes, en proceso, terminadas)', color: 'bg-violet-500' },
     { value: 'create', label: 'Crear', desc: 'Crear nuevas OTs', color: 'bg-emerald-500' },
     { value: 'edit', label: 'Editar', desc: 'Editar OTs existentes', color: 'bg-amber-500' },
@@ -2312,6 +2313,7 @@ function AdminPanel({
                         >
                           <div className={`w-8 h-8 rounded-lg ${perm.color} flex items-center justify-center flex-shrink-0 ${isActive ? '' : 'opacity-40'}`}>
                             {perm.value === 'view' && <Eye size={14} className="text-white" />}
+                            {perm.value === 'guardia' && <Scan size={14} className="text-white" />}
                             {perm.value === 'supervisor' && <ShieldCheck size={14} className="text-white" />}
                             {perm.value === 'create' && <Plus size={14} className="text-white" />}
                             {perm.value === 'edit' && <Pencil size={14} className="text-white" />}
@@ -2458,6 +2460,7 @@ function AdminPanel({
                               >
                                 <div className={`w-8 h-8 rounded-lg ${perm.color} flex items-center justify-center flex-shrink-0 ${isActive ? '' : 'opacity-40'}`}>
                                   {perm.value === 'view' && <Eye size={14} className="text-white" />}
+                                  {perm.value === 'guardia' && <Scan size={14} className="text-white" />}
                                   {perm.value === 'supervisor' && <ShieldCheck size={14} className="text-white" />}
                                   {perm.value === 'create' && <Plus size={14} className="text-white" />}
                                   {perm.value === 'edit' && <Pencil size={14} className="text-white" />}
@@ -6464,7 +6467,7 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
                         <div className="text-sm">{profile.name}</div>
                         <div className="text-[9px] font-semibold opacity-80">
                           {profile.hasPassword ? 'Requiere clave de acceso' : (profile.permissions || ['view']).map(p => {
-                            const permOpt = [{ value: 'view', label: 'Ver' }, { value: 'supervisor', label: 'Supervisor' }, { value: 'create', label: 'Crear' }, { value: 'edit', label: 'Editar' }, { value: 'delete', label: 'Eliminar' }].find(o => o.value === p);
+                            const permOpt = [{ value: 'view', label: 'Ver' }, { value: 'guardia', label: 'Guardia' }, { value: 'supervisor', label: 'Supervisor' }, { value: 'create', label: 'Crear' }, { value: 'edit', label: 'Editar' }, { value: 'delete', label: 'Eliminar' }].find(o => o.value === p);
                             return permOpt ? permOpt.label : '';
                           }).filter(Boolean).join(' · ')}
                         </div>
