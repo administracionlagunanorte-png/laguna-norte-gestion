@@ -56,12 +56,12 @@ export async function GET() {
 }
 
 // POST /api/workorders — create a new work order
+// The otId is generated atomically on the server to prevent duplicate numbers
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
     const id = body.id || crypto.randomUUID();
-    const otId = body.otId || '';
     const activities = Array.isArray(body.activities) ? body.activities : [];
     const collaborators = Array.isArray(body.collaborators) ? body.collaborators : [];
     const zoneName = body.zoneName || '';
@@ -74,6 +74,38 @@ export async function POST(request: NextRequest) {
     const completedAt = status === 'Terminada' ? new Date() : null;
     const plannedDate = body.plannedDate ? new Date(body.plannedDate) : null;
     const recurringId = body.recurringId || null;
+
+    // ─── Generate otId atomically on the server ───
+    // Always calculate from actual data to prevent duplicates and resets
+    const allOts = await db.workOrder.findMany({
+      select: { otId: true },
+    });
+    let maxNum = 0;
+    for (const ot of allOts) {
+      const num = parseInt(ot.otId.replace('OT-', ''), 10);
+      if (!isNaN(num) && num > maxNum) maxNum = num;
+    }
+
+    // Also check the Counter table for a higher value
+    let counter = await db.counter.findUnique({ where: { id: 'ot_counter' } });
+    if (counter && counter.value > maxNum) {
+      maxNum = counter.value;
+    }
+
+    const nextNum = maxNum + 1;
+    const otId = body.otId || `OT-${String(nextNum).padStart(4, '0')}`;
+
+    // Update the counter to stay in sync
+    if (counter) {
+      await db.counter.update({
+        where: { id: 'ot_counter' },
+        data: { value: nextNum },
+      });
+    } else {
+      await db.counter.create({
+        data: { id: 'ot_counter', value: nextNum },
+      });
+    }
 
     const row = await db.workOrder.create({
       data: {

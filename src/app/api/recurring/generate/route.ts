@@ -26,11 +26,18 @@ export async function POST() {
     const allOts = await db.workOrder.findMany({
       select: { otId: true },
     });
-    let counter = 0;
+    let maxOtNum = 0;
     for (const ot of allOts) {
       const num = parseInt(ot.otId.replace('OT-', ''), 10);
-      if (!isNaN(num) && num > counter) counter = num;
+      if (!isNaN(num) && num > maxOtNum) maxOtNum = num;
     }
+
+    // Also check Counter table
+    let counter = await db.counter.findUnique({ where: { id: 'ot_counter' } });
+    if (counter && counter.value > maxOtNum) {
+      maxOtNum = counter.value;
+    }
+    let nextNum = maxOtNum;
 
     // Fetch all active recurring work orders
     const activeRecurring = await db.recurringWorkOrder.findMany({
@@ -72,8 +79,8 @@ export async function POST() {
       }
 
       // Generate the WorkOrder
-      counter++;
-      const otId = `OT-${String(counter).padStart(4, '0')}`;
+      nextNum++;
+      const otId = `OT-${String(nextNum).padStart(4, '0')}`;
 
       const woId = crypto.randomUUID();
       await db.workOrder.create({
@@ -91,6 +98,18 @@ export async function POST() {
           recurringId: recurring.id,
         },
       });
+
+      // Update the counter to stay in sync
+      if (counter) {
+        await db.counter.update({
+          where: { id: 'ot_counter' },
+          data: { value: nextNum },
+        });
+      } else {
+        counter = await db.counter.create({
+          data: { id: 'ot_counter', value: nextNum },
+        });
+      }
 
       // Update lastGeneratedAt
       await db.recurringWorkOrder.update({

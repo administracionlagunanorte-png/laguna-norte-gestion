@@ -505,6 +505,7 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
   const [apiAvailable, setApiAvailable] = useState(false);
   const [lastSync, setLastSync] = useState<number>(0);
   const mountedRef = useRef(false);
+  const creatingRef = useRef(false); // Prevent double-creation
 
   // Fetch from API; fallback to localStorage
   const fetchWorkOrders = useCallback(async (showSyncIndicator = false) => {
@@ -562,78 +563,87 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
   }, []);
 
   const createWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
-    // Get next OT counter from the database (authoritative source)
-    let counter = 0;
+    // ─── Prevent double-creation (race condition guard) ───
+    if (creatingRef.current) {
+      return null;
+    }
+    creatingRef.current = true;
+
     try {
-      const counterRes = await fetch('/api/counter', { method: 'POST' });
-      if (counterRes.ok) {
-        const counterData = await counterRes.json();
-        counter = counterData.value;
-      } else {
-        // Fallback: try to calculate from existing OTs in state
-        const existingMax = workOrders.reduce((max, ot) => {
-          const num = parseInt(ot.otId.replace('OT-', ''), 10);
-          return !isNaN(num) && num > max ? num : max;
-        }, 0);
-        counter = existingMax + 1;
+      const status = data.status ?? 'Pendiente';
+      const now = Date.now();
+      const tempId = data.id || generateUniqueId();
+
+      // ─── Strategy: Let the SERVER assign the otId ───
+      // Send the OT without an otId — the server generates it atomically from the counter
+      // This prevents duplicate otId numbers when multiple requests come in simultaneously
+      const newOT: WorkOrder = {
+        id: tempId,
+        otId: '', // Will be assigned by the server
+        activities: data.activities ?? [],
+        collaborators: data.collaborators ?? [],
+        zoneName: data.zoneName ?? '',
+        description: data.description ?? '',
+        status,
+        plannedDate: data.plannedDate ?? null,
+        createdAt: now,
+        startedAt: (status === 'En Proceso' || status === 'Terminada') ? (data.startedAt ?? now) : null,
+        completedAt: status === 'Terminada' ? (data.completedAt ?? now) : null,
+        photosBefore: data.photosBefore ?? [],
+        photosAfter: data.photosAfter ?? [],
+      };
+
+      // Push to API first — server assigns the otId atomically
+      try {
+        const res = await fetch('/api/workorders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...newOT, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
+        });
+        if (res.ok) {
+          const savedOT = await res.json();
+          setApiAvailable(true);
+          setLastSync(Date.now());
+          // Use the server-assigned otId
+          newOT.otId = savedOT.otId;
+          newOT.id = savedOT.id;
+          // Save to state + localStorage with the correct server otId
+          setWorkOrders(prev => {
+            const updated = [newOT, ...prev];
+            writeToLocalStorage(updated);
+            return updated;
+          });
+          return newOT;
+        } else {
+          setApiAvailable(false);
+        }
+      } catch {
+        setApiAvailable(false);
       }
-    } catch {
-      // Offline fallback: use local data
-      const existingMax = workOrders.reduce((max, ot) => {
+
+      // ─── Offline fallback: generate otId locally ───
+      // Only used if the API is completely unreachable
+      const existingMax = readFromLocalStorage().reduce((max, ot) => {
         const num = parseInt(ot.otId.replace('OT-', ''), 10);
         return !isNaN(num) && num > max ? num : max;
       }, 0);
-      counter = existingMax + 1;
-    }
+      const counter = existingMax + 1;
+      newOT.otId = `OT-${String(counter).padStart(4, '0')}`;
 
-    const otId = `OT-${String(counter).padStart(4, '0')}`;
-
-    const status = data.status ?? 'Pendiente';
-    const now = Date.now();
-    const newOT: WorkOrder = {
-      id: generateUniqueId(),
-      otId,
-      activities: data.activities ?? [],
-      collaborators: data.collaborators ?? [],
-      zoneName: data.zoneName ?? '',
-      description: data.description ?? '',
-      status,
-      plannedDate: data.plannedDate ?? null,
-      createdAt: now,
-      startedAt: (status === 'En Proceso' || status === 'Terminada') ? (data.startedAt ?? now) : null,
-      completedAt: status === 'Terminada' ? (data.completedAt ?? now) : null,
-      photosBefore: data.photosBefore ?? [],
-      photosAfter: data.photosAfter ?? [],
-    };
-
-    // Save to state + localStorage immediately (always works offline)
-    setWorkOrders(prev => {
-      const updated = [newOT, ...prev];
-      writeToLocalStorage(updated);
-      return updated;
-    });
-
-    // Push to API immediately — this is what syncs across devices
-    try {
-      const res = await fetch('/api/workorders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newOT, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
+      // Save to state + localStorage for offline use
+      setWorkOrders(prev => {
+        const updated = [newOT, ...prev];
+        writeToLocalStorage(updated);
+        return updated;
       });
-      if (res.ok) {
-        setApiAvailable(true);
-        setLastSync(Date.now());
-        // Re-fetch to confirm server state and get any other device's changes
-        fetchWorkOrders(false);
-      } else {
-        setApiAvailable(false);
-      }
-    } catch {
-      setApiAvailable(false);
-    }
+      writeCounterToLocalStorage(counter);
 
-    return newOT;
-  }, [fetchWorkOrders, workOrders]);
+      return newOT;
+    } finally {
+      // Always reset the guard, even on error
+      creatingRef.current = false;
+    }
+  }, [fetchWorkOrders, performedBy, profileId]);
 
   const updateWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
     if (!data.id) return null;
