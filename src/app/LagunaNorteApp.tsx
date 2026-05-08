@@ -10,6 +10,7 @@ import {
   Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound, ScrollText,
   QrCode, Scan, MapPinned, Wifi, WifiOff, Upload, CloudOff, CloudCheck, RefreshCcw
 } from 'lucide-react';
+import { Html5Qrcode } from 'html5-qrcode';
 
 /* ─── Data Structures ─── */
 
@@ -5990,20 +5991,21 @@ function QrScannerView({
   }, []);
 
   // ─── Auto-sync when coming back online ───
-  useEffect(() => {
-    if (isOnline && pendingScans.length > 0 && !syncing) {
-      syncPendingScans();
-    }
-  }, [isOnline, pendingScans.length]);
+  // Uses a ref to track previous online state so we only sync on offline→online transition
+  const prevOnlineRef = useRef(true);
+  const syncingRef = useRef(false);
 
   // ─── Sync pending scans to server ───
   const syncPendingScans = useCallback(async () => {
+    // Prevent double-sync
+    if (syncingRef.current) return;
     const unsynced = getOfflineScans().filter(s => !s.synced);
     if (unsynced.length === 0) {
       setPendingScans([]);
       return;
     }
 
+    syncingRef.current = true;
     setSyncing(true);
     setSyncResult(null);
     try {
@@ -6044,9 +6046,21 @@ function QrScannerView({
     } catch {
       // Still offline or server error - keep pending
     } finally {
+      syncingRef.current = false;
       setSyncing(false);
     }
   }, [profileName]);
+
+  // Trigger auto-sync on offline→online transition AND when new scans are added while online
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+
+    if (isOnline && pendingScans.length > 0 && !syncingRef.current) {
+      // Auto-sync: either we just came back online, or a new scan was added while online that needs syncing
+      syncPendingScans();
+    }
+  }, [isOnline, pendingScans.length, syncPendingScans]);
 
   // Load my recent scans
   useEffect(() => {
@@ -6189,7 +6203,6 @@ function QrScannerView({
     setScanning(true);
     setError('');
     try {
-      const { Html5Qrcode } = await import('html5-qrcode');
       const scanner = new Html5Qrcode('qr-reader');
       setScannerInstance(scanner);
       await scanner.start(
@@ -6206,7 +6219,7 @@ function QrScannerView({
       );
     } catch (err: any) {
       console.error('Scanner error:', err);
-      setError('No se pudo iniciar la cámara. Intenta escanear manualmente.');
+      setError('No se pudo iniciar la cámara. Verifica los permisos de cámara e intenta de nuevo.');
       setScanning(false);
     }
   }, [handleScan]);
@@ -6276,33 +6289,28 @@ function QrScannerView({
           </div>
         )}
 
-        {/* ─── Pending Scans Badge & Sync ─── */}
+        {/* ─── Pending Scans Badge & Auto-Sync ─── */}
         {pendingScans.length > 0 && (
-          <div className={`border p-3 rounded-2xl flex items-center gap-3 ${isOnline ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isOnline ? 'bg-blue-100' : 'bg-amber-100'}`}>
+          <div className={`border p-3 rounded-2xl flex items-center gap-3 ${syncing ? 'bg-blue-50 border-blue-200' : isOnline ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${syncing ? 'bg-blue-100' : isOnline ? 'bg-emerald-100' : 'bg-amber-100'}`}>
               {syncing ? (
                 <RefreshCcw size={18} className="text-blue-500 animate-spin" />
               ) : isOnline ? (
-                <CloudCheck size={18} className="text-blue-500" />
+                <Upload size={18} className="text-emerald-500" />
               ) : (
                 <CloudOff size={18} className="text-amber-500" />
               )}
             </div>
             <div className="flex-1">
-              <p className="text-xs font-black uppercase" style={{ color: isOnline ? '#2563eb' : '#d97706' }}>
+              <p className="text-xs font-black uppercase" style={{ color: syncing ? '#2563eb' : isOnline ? '#059669' : '#d97706' }}>
                 {pendingScans.length} escaneo{pendingScans.length !== 1 ? 's' : ''} pendiente{pendingScans.length !== 1 ? 's' : ''}
               </p>
               {syncing ? (
-                <p className="text-[10px] font-bold text-blue-500">Sincronizando...</p>
+                <p className="text-[10px] font-bold text-blue-500">Enviando automáticamente...</p>
               ) : isOnline ? (
-                <button
-                  onClick={syncPendingScans}
-                  className="text-[10px] font-black text-blue-600 uppercase flex items-center gap-1 hover:underline"
-                >
-                  <Upload size={10} /> Enviar ahora
-                </button>
+                <p className="text-[10px] font-bold text-emerald-500">Enviando al servidor...</p>
               ) : (
-                <p className="text-[10px] font-bold text-amber-500">Se enviarán al recuperar conexión</p>
+                <p className="text-[10px] font-bold text-amber-500">Se enviarán automáticamente al recuperar conexión</p>
               )}
             </div>
           </div>
