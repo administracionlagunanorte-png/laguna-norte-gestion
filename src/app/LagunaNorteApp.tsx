@@ -8,7 +8,7 @@ import {
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, ShieldCheck, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
   Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound, ScrollText,
-  QrCode, Scan, MapPinned
+  QrCode, Scan, MapPinned, Wifi, WifiOff, Upload, CloudOff, CloudCheck, RefreshCcw
 } from 'lucide-react';
 
 /* ─── Data Structures ─── */
@@ -5902,6 +5902,45 @@ function GuardiasPanel({
 
 /* ─── QR Scanner View (Guardia) ─── */
 
+/* ─── Offline Scan Storage Helper ─── */
+
+interface OfflineScan {
+  id: string;
+  code: string;
+  scannedBy: string;
+  profileId: string;
+  latitude: number | null;
+  longitude: number | null;
+  notes: string;
+  scannedAt: number; // timestamp when scanned locally
+  synced: boolean;
+}
+
+const OFFLINE_SCANS_KEY = 'laguna_norte_offline_scans';
+
+function getOfflineScans(): OfflineScan[] {
+  try {
+    const data = localStorage.getItem(OFFLINE_SCANS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch { return []; }
+}
+
+function saveOfflineScans(scans: OfflineScan[]) {
+  localStorage.setItem(OFFLINE_SCANS_KEY, JSON.stringify(scans));
+}
+
+function addOfflineScan(scan: OfflineScan) {
+  const scans = getOfflineScans();
+  scans.push(scan);
+  saveOfflineScans(scans);
+}
+
+function removeOfflineScans(ids: string[]) {
+  const scans = getOfflineScans().filter(s => !ids.includes(s.id));
+  saveOfflineScans(scans);
+  return scans;
+}
+
 function QrScannerView({
   onBack,
   profileName,
@@ -5922,9 +5961,97 @@ function QrScannerView({
   const [myScans, setMyScans] = useState<QrScanItem[]>([]);
   const [scannerInstance, setScannerInstance] = useState<any>(null);
 
+  // ─── Offline State ───
+  const [isOnline, setIsOnline] = useState(true);
+  const [pendingScans, setPendingScans] = useState<OfflineScan[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ synced: number; failed: number } | null>(null);
+
+  // ─── Online/Offline Detection ───
+  useEffect(() => {
+    // Set initial state
+    setIsOnline(navigator.onLine);
+    // Load pending scans from localStorage
+    setPendingScans(getOfflineScans().filter(s => !s.synced));
+
+    const handleOnline = () => {
+      setIsOnline(true);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // ─── Auto-sync when coming back online ───
+  useEffect(() => {
+    if (isOnline && pendingScans.length > 0 && !syncing) {
+      syncPendingScans();
+    }
+  }, [isOnline, pendingScans.length]);
+
+  // ─── Sync pending scans to server ───
+  const syncPendingScans = useCallback(async () => {
+    const unsynced = getOfflineScans().filter(s => !s.synced);
+    if (unsynced.length === 0) {
+      setPendingScans([]);
+      return;
+    }
+
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch('/api/qr-scans/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scans: unsynced }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Remove successfully synced scans from localStorage
+        const syncedIds = (data.results || [])
+          .filter((r: any) => r.success)
+          .map((r: any) => {
+            // Find matching offline scan by code
+            const match = unsynced.find((s: OfflineScan) => s.code === r.code);
+            return match?.id;
+          })
+          .filter(Boolean);
+
+        if (syncedIds.length > 0) {
+          removeOfflineScans(syncedIds);
+        }
+
+        const remaining = getOfflineScans().filter(s => !s.synced);
+        setPendingScans(remaining);
+        setSyncResult({ synced: data.synced || 0, failed: data.failed || 0 });
+
+        // Refresh my scans from server
+        try {
+          const scanRes = await fetch(`/api/qr-scans?scannedBy=${encodeURIComponent(profileName)}&limit=20`);
+          if (scanRes.ok) {
+            const scanData = await scanRes.json();
+            setMyScans(Array.isArray(scanData.scans) ? scanData.scans : []);
+          }
+        } catch { /* ignore */ }
+      }
+    } catch {
+      // Still offline or server error - keep pending
+    } finally {
+      setSyncing(false);
+    }
+  }, [profileName]);
+
   // Load my recent scans
   useEffect(() => {
     const fetchMyScans = async () => {
+      if (!navigator.onLine) return; // Don't fetch if offline
       try {
         const res = await fetch(`/api/qr-scans?scannedBy=${encodeURIComponent(profileName)}&limit=20`);
         if (res.ok) {
@@ -5952,37 +6079,109 @@ function QrScannerView({
         lng = pos.coords.longitude;
       } catch { /* GPS not available, that's ok */ }
 
-      const result = await fetch('/api/qr-scans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const scanPayload = {
+        code,
+        scannedBy: profileName,
+        profileId,
+        latitude: lat,
+        longitude: lng,
+        notes: notes.trim() || undefined,
+      };
+
+      if (navigator.onLine) {
+        // ─── ONLINE: Send directly to server ───
+        const result = await fetch('/api/qr-scans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(scanPayload),
+        });
+        if (!result.ok) {
+          const errData = await result.json();
+          throw new Error(errData.error || 'Error al registrar escaneo');
+        }
+        const scanData = await result.json();
+        setLastScan(scanData);
+        setSuccess(`Ubicación registrada: ${scanData?.location?.name ?? code}`);
+        setNotes('');
+
+        // Refresh my scans
+        try {
+          const res = await fetch(`/api/qr-scans?scannedBy=${encodeURIComponent(profileName)}&limit=20`);
+          if (res.ok) {
+            const data = await res.json();
+            setMyScans(Array.isArray(data.scans) ? data.scans : []);
+          }
+        } catch { /* ignore */ }
+      } else {
+        // ─── OFFLINE: Save locally ───
+        const offlineScan: OfflineScan = {
+          id: `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          code,
+          scannedBy: profileName,
+          profileId,
+          latitude: lat ?? null,
+          longitude: lng ?? null,
+          notes: notes.trim(),
+          scannedAt: Date.now(),
+          synced: false,
+        };
+        addOfflineScan(offlineScan);
+        setPendingScans(prev => [...prev, offlineScan]);
+        setLastScan({
+          id: offlineScan.id,
+          qrLocationId: '',
+          scannedBy: profileName,
+          profileId,
+          latitude: lat ?? null,
+          longitude: lng ?? null,
+          notes: notes.trim(),
+          createdAt: Date.now(),
+          location: null,
+        });
+        setSuccess(`Guardado localmente (sin internet): ${code}`);
+        setNotes('');
+      }
+    } catch (err: any) {
+      // If fetch fails (network error), try saving offline
+      if (!navigator.onLine || err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
+        let lat: number | null = null, lng: number | null = null;
+        try {
+          const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000, enableHighAccuracy: true });
+          });
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+        } catch { /* GPS not available */ }
+
+        const offlineScan: OfflineScan = {
+          id: `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           code,
           scannedBy: profileName,
           profileId,
           latitude: lat,
           longitude: lng,
-          notes: notes.trim() || undefined,
-        }),
-      });
-      if (!result.ok) {
-        const errData = await result.json();
-        throw new Error(errData.error || 'Error al registrar escaneo');
+          notes: notes.trim(),
+          scannedAt: Date.now(),
+          synced: false,
+        };
+        addOfflineScan(offlineScan);
+        setPendingScans(prev => [...prev, offlineScan]);
+        setLastScan({
+          id: offlineScan.id,
+          qrLocationId: '',
+          scannedBy: profileName,
+          profileId,
+          latitude: lat,
+          longitude: lng,
+          notes: notes.trim(),
+          createdAt: Date.now(),
+          location: null,
+        });
+        setSuccess(`Guardado localmente (sin internet): ${code}`);
+        setNotes('');
+      } else {
+        setError(err.message || 'Error al registrar escaneo');
       }
-      const scanData = await result.json();
-      setLastScan(scanData);
-      setSuccess(`Ubicación registrada: ${scanData?.location?.name ?? code}`);
-      setNotes('');
-
-      // Refresh my scans
-      try {
-        const res = await fetch(`/api/qr-scans?scannedBy=${encodeURIComponent(profileName)}&limit=20`);
-        if (res.ok) {
-          const data = await res.json();
-          setMyScans(Array.isArray(data.scans) ? data.scans : []);
-        }
-      } catch { /* ignore */ }
-    } catch (err: any) {
-      setError(err.message || 'Error al registrar escaneo');
     }
   }, [profileName, profileId, notes]);
 
@@ -6066,18 +6265,100 @@ function QrScannerView({
       </div>
 
       <div className="p-4 space-y-4 pb-20">
+        {/* ─── Connection Status Banner ─── */}
+        {!isOnline && (
+          <div className="bg-amber-50 border border-amber-200 p-3 rounded-2xl flex items-center gap-3">
+            <WifiOff className="text-amber-500 flex-shrink-0" size={20} />
+            <div className="flex-1">
+              <p className="text-xs font-black text-amber-700 uppercase">Sin conexión a internet</p>
+              <p className="text-[10px] text-amber-500 font-bold">Los escaneos se guardarán localmente y se enviarán al recuperar conexión</p>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Pending Scans Badge & Sync ─── */}
+        {pendingScans.length > 0 && (
+          <div className={`border p-3 rounded-2xl flex items-center gap-3 ${isOnline ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'}`}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isOnline ? 'bg-blue-100' : 'bg-amber-100'}`}>
+              {syncing ? (
+                <RefreshCcw size={18} className="text-blue-500 animate-spin" />
+              ) : isOnline ? (
+                <CloudCheck size={18} className="text-blue-500" />
+              ) : (
+                <CloudOff size={18} className="text-amber-500" />
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="text-xs font-black uppercase" style={{ color: isOnline ? '#2563eb' : '#d97706' }}>
+                {pendingScans.length} escaneo{pendingScans.length !== 1 ? 's' : ''} pendiente{pendingScans.length !== 1 ? 's' : ''}
+              </p>
+              {syncing ? (
+                <p className="text-[10px] font-bold text-blue-500">Sincronizando...</p>
+              ) : isOnline ? (
+                <button
+                  onClick={syncPendingScans}
+                  className="text-[10px] font-black text-blue-600 uppercase flex items-center gap-1 hover:underline"
+                >
+                  <Upload size={10} /> Enviar ahora
+                </button>
+              ) : (
+                <p className="text-[10px] font-bold text-amber-500">Se enviarán al recuperar conexión</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ─── Sync Result ─── */}
+        {syncResult && (
+          <div className={`border p-3 rounded-2xl flex items-center gap-3 ${syncResult.failed > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+            {syncResult.failed > 0 ? (
+              <CloudOff className="text-amber-500 flex-shrink-0" size={18} />
+            ) : (
+              <CloudCheck className="text-emerald-500 flex-shrink-0" size={18} />
+            )}
+            <div>
+              <p className="text-xs font-black uppercase" style={{ color: syncResult.failed > 0 ? '#d97706' : '#059669' }}>
+                {syncResult.synced} escaneo{syncResult.synced !== 1 ? 's' : ''} sincronizado{syncResult.synced !== 1 ? 's' : ''}
+                {syncResult.failed > 0 && ` · ${syncResult.failed} fallido${syncResult.failed !== 1 ? 's' : ''}`}
+              </p>
+            </div>
+            <button onClick={() => setSyncResult(null)} className="ml-auto p-1 hover:bg-black/5 rounded-lg">
+              <X size={14} className="text-slate-400" />
+            </button>
+          </div>
+        )}
+
+        {/* ─── Online Indicator (small, always visible) ─── */}
+        <div className="flex items-center justify-center gap-2">
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${isOnline ? 'bg-emerald-50' : 'bg-amber-50'}`}>
+            <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+            <span className={`text-[9px] font-black uppercase ${isOnline ? 'text-emerald-600' : 'text-amber-600'}`}>
+              {isOnline ? 'En línea' : 'Sin conexión'}
+            </span>
+            {pendingScans.length > 0 && (
+              <span className={`text-[9px] font-black ml-1 ${isOnline ? 'text-blue-600' : 'text-amber-600'}`}>
+                · {pendingScans.length} pendiente{pendingScans.length !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+        </div>
+
         {/* Success/Error Messages */}
         {success && (
-          <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl flex items-center gap-3">
-            <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={20} />
+          <div className={`border p-4 rounded-2xl flex items-center gap-3 ${success.includes('localmente') ? 'bg-amber-50 border-amber-100' : 'bg-emerald-50 border-emerald-100'}`}>
+            {success.includes('localmente') ? (
+              <CloudOff className="text-amber-500 flex-shrink-0" size={20} />
+            ) : (
+              <CheckCircle2 className="text-emerald-500 flex-shrink-0" size={20} />
+            )}
             <div>
-              <p className="text-xs font-black text-emerald-700 uppercase">{success}</p>
+              <p className={`text-xs font-black uppercase ${success.includes('localmente') ? 'text-amber-700' : 'text-emerald-700'}`}>{success}</p>
               {lastScan?.location?.location && (
                 <p className="text-[10px] text-emerald-500 font-bold flex items-center gap-1 mt-1">
                   <MapPinned size={10} /> {lastScan.location.location}
                 </p>
               )}
-              <p className="text-[10px] text-emerald-400 font-medium mt-1">
+              <p className="text-[10px] text-slate-400 font-medium mt-1">
                 {lastScan && formatDateTime(lastScan.createdAt)}
               </p>
             </div>
@@ -6113,13 +6394,17 @@ function QrScannerView({
           className={`w-full py-4 rounded-2xl font-black uppercase text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg ${
             scanning
               ? 'bg-red-500 text-white shadow-red-200'
-              : 'bg-blue-600 text-white shadow-blue-200'
+              : isOnline
+                ? 'bg-blue-600 text-white shadow-blue-200'
+                : 'bg-amber-500 text-white shadow-amber-200'
           }`}
         >
           {scanning ? (
             <><X size={18} /> Detener Escáner</>
-          ) : (
+          ) : isOnline ? (
             <><Scan size={18} /> Escanear QR</>
+          ) : (
+            <><Scan size={18} /> Escanear QR (Offline)</>
           )}
         </button>
 
@@ -6137,12 +6422,35 @@ function QrScannerView({
             <button
               onClick={handleManualScan}
               disabled={!manualCode.trim()}
-              className="px-4 py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform disabled:opacity-50"
+              className={`px-4 py-3 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform disabled:opacity-50 ${isOnline ? 'bg-blue-600' : 'bg-amber-500'}`}
             >
               Registrar
             </button>
           </div>
         </div>
+
+        {/* ─── Pending Scans Detail List ─── */}
+        {pendingScans.length > 0 && (
+          <div>
+            <p className="text-[10px] font-black text-amber-500 uppercase mb-2 ml-1 flex items-center gap-1">
+              <CloudOff size={10} /> Escaneos pendientes por enviar
+            </p>
+            <div className="space-y-2">
+              {pendingScans.map(scan => (
+                <div key={scan.id} className="bg-amber-50 rounded-2xl border border-amber-100 p-3 flex items-center gap-3">
+                  <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <CloudOff size={14} className="text-amber-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-black text-amber-800 truncate">{scan.code}</p>
+                    <p className="text-[9px] text-amber-400 font-bold">{formatDateTime(scan.scannedAt)}</p>
+                    {scan.notes && <p className="text-[9px] text-amber-400">{scan.notes}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* My Recent Scans */}
         {myScans.length > 0 && (
