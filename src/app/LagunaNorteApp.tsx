@@ -8,9 +8,10 @@ import {
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, ShieldCheck, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
   Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound, ScrollText,
-  QrCode, Scan, MapPinned, Wifi, WifiOff, Upload, CloudOff, CloudCheck, RefreshCcw
+  QrCode, Scan, MapPinned, Wifi, WifiOff, Upload, CloudOff, CloudCheck, RefreshCcw, Printer, FileDown
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
+import jsPDF from 'jspdf';
 
 /* ─── Data Structures ─── */
 
@@ -5624,6 +5625,211 @@ function GuardiasPanel({
     ? scans.filter(s => s.profileId === currentProfile?.id || s.scannedBy === currentProfile?.name)
     : scans;
 
+  // ─── QR Export Functions ───
+  const [exporting, setExporting] = useState(false);
+
+  // Export a single QR as PDF
+  const exportSingleQR = async (loc: QrLocationItem) => {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/qr-export?mode=single&code=${encodeURIComponent(loc.code)}`);
+      if (!res.ok) throw new Error('Error al generar QR');
+      const data = await res.json();
+      if (!data.items?.length) throw new Error('No se encontró la ubicación');
+
+      const item = data.items[0];
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: [216, 279], // Letter size
+      });
+
+      // Center the 60x60mm QR on the page
+      const qrSize = 60;
+      const x = (216 - qrSize) / 2;
+      const y = (279 - qrSize - 15) / 2; // offset for label
+
+      // Add QR image
+      pdf.addImage(item.dataUrl, 'PNG', x, y, qrSize, qrSize);
+
+      // Add name label below QR
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(12);
+      pdf.text(item.name, 216 / 2, y + qrSize + 6, { align: 'center' });
+
+      // Add code below name
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(9);
+      pdf.text(item.code, 216 / 2, y + qrSize + 11, { align: 'center' });
+
+      // Add location if present
+      if (item.location) {
+        pdf.setFontSize(8);
+        pdf.text(item.location, 216 / 2, y + qrSize + 15, { align: 'center' });
+      }
+
+      pdf.save(`QR-${item.name}-${item.code}.pdf`);
+    } catch (err: any) {
+      alert('Error al exportar QR: ' + (err.message || 'Error desconocido'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Export all QRs grouped by name on Letter size pages
+  const exportBulkQR = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch('/api/qr-export?mode=bulk&groupByName=true');
+      if (!res.ok) throw new Error('Error al generar QRs');
+      const data = await res.json();
+      if (!data.items?.length) {
+        alert('No hay ubicaciones QR activas para exportar');
+        return;
+      }
+
+      const items: Array<{
+        id: string;
+        name: string;
+        code: string;
+        location: string;
+        description: string;
+        dataUrl: string;
+      }> = data.items;
+
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: [216, 279], // Letter size
+      });
+
+      // Layout config
+      const qrSize = 60; // 60x60mm per QR
+      const spacing = 5; // 5mm between QRs for cutting
+      const marginLeft = 10; // 10mm margins
+      const marginTop = 10;
+      const labelHeight = 15; // Space for name + code label below QR
+      const cellHeight = qrSize + labelHeight; // Total cell height including label
+      const cellWidth = qrSize + spacing; // Cell width with spacing
+
+      // Calculate how many per row/column
+      const usableWidth = 216 - 2 * marginLeft; // 196mm
+      const usableHeight = 279 - 2 * marginTop; // 259mm
+      const colsPerRow = Math.floor((usableWidth + spacing) / cellWidth); // 3
+      const rowsPerPage = Math.floor((usableHeight + spacing) / (cellHeight + spacing)); // 3
+
+      // Group items by name (already sorted by the API)
+      const groups: Record<string, typeof items> = {};
+      const groupOrder: string[] = [];
+      for (const item of items) {
+        if (!groups[item.name]) {
+          groups[item.name] = [];
+          groupOrder.push(item.name);
+        }
+        groups[item.name].push(item);
+      }
+
+      // Layout all items on pages
+      let page = 0;
+      let col = 0;
+      let row = 0;
+      let currentGroupName = '';
+
+      for (const groupName of groupOrder) {
+        const groupItems = groups[groupName];
+
+        for (const item of groupItems) {
+          // Check if we need a new page
+          if (row >= rowsPerPage || (page === 0 && row === 0 && col === 0 && currentGroupName === '')) {
+            if (page > 0 || col > 0) {
+              pdf.addPage([216, 279], 'portrait');
+              row = 0;
+              col = 0;
+            }
+            page++;
+
+            // Add page header
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(8);
+            pdf.setTextColor(150);
+            pdf.text('Laguna Norte - Codigos QR', 216 / 2, marginTop - 3, { align: 'center' });
+            pdf.setTextColor(0);
+          }
+
+          // Check if we need a new row
+          if (col >= colsPerRow) {
+            col = 0;
+            row++;
+          }
+
+          // Check if we need a new page after row increment
+          if (row >= rowsPerPage) {
+            pdf.addPage([216, 279], 'portrait');
+            page++;
+            row = 0;
+            col = 0;
+
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(8);
+            pdf.setTextColor(150);
+            pdf.text('Laguna Norte - Codigos QR', 216 / 2, marginTop - 3, { align: 'center' });
+            pdf.setTextColor(0);
+          }
+
+          const x = marginLeft + col * cellWidth;
+          const y = marginTop + row * (cellHeight + spacing);
+
+          // Draw QR
+          pdf.addImage(item.dataUrl, 'PNG', x, y, qrSize, qrSize);
+
+          // Draw cut guide lines (light dashed)
+          pdf.setDrawColor(220);
+          pdf.setLineDashPattern([1, 2], 0);
+          pdf.rect(x - 1, y - 1, qrSize + 2, qrSize + 2);
+          pdf.setLineDashPattern([], 0);
+
+          // Name label below QR
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(9);
+          pdf.setTextColor(30, 41, 59);
+          pdf.text(item.name, x + qrSize / 2, y + qrSize + 5, { align: 'center' });
+
+          // Code below name
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(7);
+          pdf.setTextColor(100);
+          pdf.text(item.code, x + qrSize / 2, y + qrSize + 9, { align: 'center' });
+
+          // Location if present
+          if (item.location) {
+            pdf.setFontSize(6);
+            pdf.setTextColor(130);
+            pdf.text(item.location, x + qrSize / 2, y + qrSize + 13, { align: 'center' });
+          }
+
+          col++;
+          currentGroupName = groupName;
+        }
+      }
+
+      // Add page numbers
+      const totalPages = pdf.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(7);
+        pdf.setTextColor(180);
+        pdf.text(`Pagina ${i} de ${totalPages}`, 216 / 2, 279 - 5, { align: 'center' });
+      }
+
+      pdf.save('QR-Ubicaciones-Laguna-Norte.pdf');
+    } catch (err: any) {
+      alert('Error al exportar QRs: ' + (err.message || 'Error desconocido'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col">
       {/* Header */}
@@ -5649,6 +5855,15 @@ function GuardiasPanel({
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform"
           >
             <Plus size={14} /> Nueva Ubicación
+          </button>
+        )}
+        {isAdmin && locations.length > 0 && (
+          <button
+            onClick={exportBulkQR}
+            disabled={exporting}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform disabled:opacity-50"
+          >
+            {exporting ? <RefreshCcw size={14} className="animate-spin" /> : <FileDown size={14} />} Exportar Todo
           </button>
         )}
       </div>
@@ -5721,6 +5936,9 @@ function GuardiasPanel({
                 </div>
                 {isAdmin && (
                   <div className="flex gap-2 mt-3 pt-3 border-t border-slate-50">
+                    <button onClick={() => exportSingleQR(loc)} disabled={exporting} className="flex-1 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1 hover:bg-emerald-100 transition-colors active:scale-95 disabled:opacity-50">
+                      <FileDown size={10} /> Exportar
+                    </button>
                     <button onClick={() => handleEdit(loc)} className="flex-1 py-2 bg-slate-50 text-slate-600 rounded-xl text-[9px] font-black uppercase flex items-center justify-center gap-1 hover:bg-slate-100 transition-colors active:scale-95">
                       <Pencil size={10} /> Editar
                     </button>
