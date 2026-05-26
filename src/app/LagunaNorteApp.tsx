@@ -7317,22 +7317,39 @@ export default function LagunaNorteApp() {
     );
   }
 
-  // Visible work orders: visibility depends on role
-  // Admin: sees everything
-  // Supervisor profile: sees everything (all statuses, all areas)
-  // Other profiles: see OTs from their assigned work areas
-  //   - With create/edit/delete: see Pendiente + En Proceso (they need to manage them)
-  //   - View only: see only En Proceso (they just complete/report)
+  // Chile timezone today string for date comparison
+  const chileTodayStr = toChileDateString(Date.now());
+
+  // Helper: check if an OT belongs to today (Chile timezone)
+  const isOtToday = (ot: WorkOrder) => {
+    const dateKey = ot.plannedDate ? toChileDateString(ot.plannedDate) : toChileDateString(ot.createdAt);
+    return dateKey === chileTodayStr;
+  };
+
+  // Visible work orders: visibility depends on role + date
+  // TODAY: ALL OTs from today are visible regardless of status (user must see all their day's work)
+  // OTHER DAYS: status-based filtering applies (OTs sort by their state)
+  // Admin: sees everything always
+  // Supervisor profile: sees everything always
+  // Other profiles: today sees all; other days see limited by status
   const visibleWorkOrders = (() => {
     if (userRole === 'admin') return workOrders;
     if (isProfileUser && currentProfile) {
-      // Supervisor profile: sees all OTs in all statuses
       if (isSupervisor) return workOrders;
-      // Determine which statuses this profile can see
       const canManage = profilePerms.includes('create') || profilePerms.includes('edit') || profilePerms.includes('delete');
       const allowedStatuses = canManage ? ['Pendiente', 'En Proceso'] : ['En Proceso'];
-      // Filter by work area and allowed statuses
       return workOrders.filter(ot => {
+        // TODAY: show all OTs regardless of status (filtered by work area only)
+        if (isOtToday(ot)) {
+          for (const waId of currentProfile.workAreaIds) {
+            const wa = workAreas.find(a => a.id === waId);
+            if (wa && ot.activities.some(a => wa.activities.includes(a))) {
+              return true;
+            }
+          }
+          return false;
+        }
+        // OTHER DAYS: apply status + work area filtering
         if (!allowedStatuses.includes(ot.status)) return false;
         for (const waId of currentProfile.workAreaIds) {
           const wa = workAreas.find(a => a.id === waId);
@@ -7351,9 +7368,16 @@ export default function LagunaNorteApp() {
   const visibleEnProceso = visibleWorkOrders.filter(o => o.status === 'En Proceso').length;
   const visibleTerminadas = visibleWorkOrders.filter(o => o.status === 'Terminada').length;
 
-  const filteredOTs = statusFilter === 'Todas'
-    ? visibleWorkOrders
-    : visibleWorkOrders.filter(o => o.status === statusFilter);
+  // Filtered OTs: status filter applies to non-today OTs; today always shows all
+  const filteredOTs = (() => {
+    if (statusFilter === 'Todas') return visibleWorkOrders;
+    return visibleWorkOrders.filter(o => {
+      // Today's OTs: always visible regardless of status filter
+      if (isOtToday(o)) return true;
+      // Other days: apply status filter
+      return o.status === statusFilter;
+    });
+  })();
 
   // Available filters based on role
   // Admin & Supervisor: all filters
@@ -7466,9 +7490,8 @@ export default function LagunaNorteApp() {
 
           {/* ─── Grouped Planificación List ─── */}
           {(() => {
-            const chileToday = toChileDateString(Date.now());
             // Group OTs by their display date (plannedDate or createdAt)
-            const groups: { label: string; color: string; ots: WorkOrder[] }[] = [];
+            const groups: { label: string; color: string; ots: WorkOrder[]; isToday?: boolean }[] = [];
             const todayOTs: WorkOrder[] = [];
             const upcomingOTs: Map<string, WorkOrder[]> = new Map();
             const noDateOTs: WorkOrder[] = [];
@@ -7476,7 +7499,7 @@ export default function LagunaNorteApp() {
 
             for (const ot of filteredOTs) {
               const dateKey = ot.plannedDate ? toChileDateString(ot.plannedDate) : toChileDateString(ot.createdAt);
-              if (dateKey === chileToday) {
+              if (dateKey === chileTodayStr) {
                 todayOTs.push(ot);
               } else if (ot.plannedDate && ot.plannedDate > Date.now()) {
                 if (!upcomingOTs.has(dateKey)) upcomingOTs.set(dateKey, []);
@@ -7489,7 +7512,7 @@ export default function LagunaNorteApp() {
               }
             }
 
-            if (todayOTs.length > 0) groups.push({ label: 'Hoy', color: 'text-blue-600', ots: todayOTs });
+            if (todayOTs.length > 0) groups.push({ label: 'Hoy', color: 'text-blue-600', ots: todayOTs, isToday: true });
             const sortedUpcoming = [...upcomingOTs.entries()].sort((a, b) => a[0].localeCompare(b[0]));
             for (const [dateKey, ots] of sortedUpcoming) {
               const parts = dateKey.split('-');
@@ -7515,6 +7538,22 @@ export default function LagunaNorteApp() {
               );
             }
 
+            // Sort OTs within each group by status order: Pendiente → En Proceso → Terminada
+            const statusOrder: Record<string, number> = { 'Pendiente': 0, 'En Proceso': 1, 'Terminada': 2 };
+            const sortByStatus = (a: WorkOrder, b: WorkOrder) => (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3);
+
+            // Sub-group a list of OTs by status
+            const subGroupByStatus = (ots: WorkOrder[]) => {
+              const pendientes = ots.filter(o => o.status === 'Pendiente').sort(sortByStatus);
+              const enProceso = ots.filter(o => o.status === 'En Proceso').sort(sortByStatus);
+              const terminadas = ots.filter(o => o.status === 'Terminada').sort(sortByStatus);
+              const result: { label: string; color: string; bgColor: string; ots: WorkOrder[] }[] = [];
+              if (pendientes.length > 0) result.push({ label: 'Pendiente', color: 'text-red-500', bgColor: 'bg-red-50', ots: pendientes });
+              if (enProceso.length > 0) result.push({ label: 'En Proceso', color: 'text-amber-500', bgColor: 'bg-amber-50', ots: enProceso });
+              if (terminadas.length > 0) result.push({ label: 'Terminada', color: 'text-emerald-500', bgColor: 'bg-emerald-50', ots: terminadas });
+              return result;
+            };
+
             return (
               <div className="space-y-4">
                 {groups.map(group => (
@@ -7522,28 +7561,35 @@ export default function LagunaNorteApp() {
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`text-[10px] font-black uppercase tracking-wider ${group.color}`}>{group.label}</span>
                       <span className="text-[8px] font-bold text-slate-300 bg-slate-50 px-2 py-0.5 rounded-full">{group.ots.length}</span>
-                      {group.label === 'Hoy' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />}
+                      {group.isToday && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />}
                     </div>
-                    <div className="space-y-2">
-                      {group.ots.map(ot => {
-                        const wa = getWorkAreaForOT(ot);
-                        return (
-                          <div
-                            key={ot.id}
-                            onClick={() => handleEditOT(ot)}
-                            className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer relative overflow-hidden active:scale-[0.98] transition-transform"
-                          >
-                            <div className={`absolute left-0 top-0 bottom-0 w-1 ${wa?.color ?? STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}></div>
-                            <div className="flex-1 truncate pr-3 pl-2">
-                              <div className="flex items-center gap-2 mb-0.5">
-                                <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
-                                <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
-                                {ot.plannedDate && group.label !== 'Hoy' && group.label !== 'Sin planificar' ? null : ot.plannedDate ? (
-                                  <span className="text-[8px] text-violet-500 font-black flex items-center gap-0.5">
-                                    <CalendarDays size={8} /> {formatDate(ot.plannedDate)}
-                                  </span>
-                                ) : (
-                                  <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
+                    {/* Sub-group by status for better visual organization */}
+                    {subGroupByStatus(group.ots).map(sub => (
+                      <div key={sub.label} className="mb-2">
+                        <div className={`flex items-center gap-1.5 mb-1.5 ml-2`}>
+                          <span className={`text-[8px] font-black uppercase ${sub.color}`}>{sub.label}</span>
+                          <span className={`text-[7px] font-bold px-1.5 py-0.5 rounded-full ${sub.bgColor} ${sub.color}`}>{sub.ots.length}</span>
+                        </div>
+                        <div className="space-y-2">
+                          {sub.ots.map(ot => {
+                            const wa = getWorkAreaForOT(ot);
+                            return (
+                              <div
+                                key={ot.id}
+                                onClick={() => handleEditOT(ot)}
+                                className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm cursor-pointer relative overflow-hidden active:scale-[0.98] transition-transform"
+                              >
+                                <div className={`absolute left-0 top-0 bottom-0 w-1 ${wa?.color ?? STATUS_CONFIG[ot.status]?.color ?? 'bg-gray-500'}`}></div>
+                                <div className="flex-1 truncate pr-3 pl-2">
+                                  <div className="flex items-center gap-2 mb-0.5">
+                                    <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{ot.otId}</span>
+                                    <span className={`text-[9px] font-black uppercase ${STATUS_CONFIG[ot.status]?.text ?? 'text-gray-500'}`}>{ot.status}</span>
+                                    {ot.plannedDate && !group.isToday && group.label !== 'Sin planificar' ? null : ot.plannedDate ? (
+                                      <span className="text-[8px] text-violet-500 font-black flex items-center gap-0.5">
+                                        <CalendarDays size={8} /> {formatDate(ot.plannedDate)}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[8px] text-slate-300 font-medium">{formatDate(ot.createdAt)}</span>
                                 )}
                                 {userRole === 'admin' && ot.startedAt && (
                                   <span className="text-[8px] text-amber-400 font-bold flex items-center gap-0.5">
@@ -7583,8 +7629,10 @@ export default function LagunaNorteApp() {
                   </div>
                 ))}
               </div>
-            );
-          })()}
+            ))}
+          </div>
+        );
+      })()}
         </main>
       )}
 
