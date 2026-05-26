@@ -2668,9 +2668,8 @@ function ModalInner({
       photosAfter: editingItem?.photosAfter ?? [],
     };
   });
-  const [customActivity, setCustomActivity] = useState('');
   const [validationError, setValidationError] = useState('');
-  const [descriptionManuallyEdited, setDescriptionManuallyEdited] = useState(!!editingItem?.description);
+  const [activitiesText, setActivitiesText] = useState((editingItem?.activities ?? []).join(', '));
 
   const isProfileRole = typeof userRole === 'string' && userRole.startsWith('profile:');
   const perms = permissions ?? ['view'];
@@ -2682,7 +2681,6 @@ function ModalInner({
 
   // Derived filtered data based on selected work area
   const selectedWorkArea = workAreas.find(wa => wa.id === form.workAreaId);
-  const filteredActivities = selectedWorkArea ? selectedWorkArea.activities : [];
   // Always show ALL personnel so users can freely select from any area
   // Personnel from the selected work area appear first
   const allCollaborators = personnel.map(p => ({
@@ -2698,127 +2696,71 @@ function ModalInner({
       ]
     : allCollaborators;
 
-  const zoneOptions = zones.map(z => ({ value: z.name }));
-
   const workAreaOptions = workAreas.map(wa => ({
     value: wa.id,
     subtitle: `${wa.activities.length} actividades, ${personnel.filter(p => p.workAreaId === wa.id).length} personas`,
     colorDot: wa.color,
   }));
 
-  // Auto-generate description
-  const generateDescription = useCallback((activities: string[], collaborators: string[], workAreaName: string) => {
-    const actStr = activities.length > 0 ? activities.join(', ') : '';
-    const collStr = collaborators.length > 0 ? collaborators.join(', ') : '';
-    const parts: string[] = [];
-    if (actStr) parts.push(`Realizar ${actStr}`);
-    if (workAreaName) parts.push(`en área ${workAreaName}`);
-    if (collStr) parts.push(`Personal asignado: ${collStr}`);
-    return parts.join('. ') + '.';
-  }, []);
-
   // Handle work area change
   const handleWorkAreaChange = useCallback((workAreaId: string) => {
     const wa = workAreas.find(a => a.id === workAreaId);
     if (!wa) {
-      setForm(prev => ({ ...prev, workAreaId: '', activities: [], collaborators: [] }));
+      setForm(prev => ({ ...prev, workAreaId: '', collaborators: [] }));
       return;
     }
-
-    // Filter activities: keep only those in the new work area
-    const keptActivities = form.activities.filter(a => wa.activities.includes(a));
 
     // Auto-select personnel from the new work area (replaces previous selection)
     // Users can then manually adjust via the collaborator selector
     const areaPersonnel = personnel.filter(p => p.workAreaId === workAreaId).map(p => p.name);
 
-    const newDescription = generateDescription(keptActivities, areaPersonnel, wa.name);
-
     setForm(prev => ({
       ...prev,
       workAreaId,
-      activities: keptActivities,
       collaborators: areaPersonnel,
-      description: descriptionManuallyEdited ? prev.description : newDescription,
     }));
-    setDescriptionManuallyEdited(false);
     setValidationError('');
-  }, [workAreas, personnel, form.activities, generateDescription, descriptionManuallyEdited]);
+  }, [workAreas, personnel]);
 
-  const handleToggleActivity = useCallback((activity: string) => {
-    setForm(prev => {
-      const newActivities = prev.activities.includes(activity)
-        ? prev.activities.filter(a => a !== activity)
-        : [...prev.activities, activity];
-      const wa = workAreas.find(a => a.id === prev.workAreaId);
-      const newDescription = generateDescription(newActivities, prev.collaborators, wa?.name ?? '');
-      return {
-        ...prev,
-        activities: newActivities,
-        description: descriptionManuallyEdited ? prev.description : newDescription,
-      };
-    });
-    setDescriptionManuallyEdited(false);
-    setValidationError('');
-  }, [workAreas, generateDescription, descriptionManuallyEdited]);
+
 
   const handleToggleCollaborator = useCallback((name: string) => {
     setForm(prev => {
       const newCollaborators = prev.collaborators.includes(name)
         ? prev.collaborators.filter(c => c !== name)
         : [...prev.collaborators, name];
-      const wa = workAreas.find(a => a.id === prev.workAreaId);
-      const newDescription = generateDescription(prev.activities, newCollaborators, wa?.name ?? '');
       return {
         ...prev,
         collaborators: newCollaborators,
-        description: descriptionManuallyEdited ? prev.description : newDescription,
       };
     });
-    setDescriptionManuallyEdited(false);
     setValidationError('');
-  }, [workAreas, generateDescription, descriptionManuallyEdited]);
+  }, []);
 
-  const handleAddCustomActivity = () => {
-    const trimmed = customActivity.trim();
-    if (trimmed && !form.activities.includes(trimmed)) {
-      setForm(prev => {
-        const newActivities = [...prev.activities, trimmed];
-        const wa = workAreas.find(a => a.id === prev.workAreaId);
-        const newDescription = generateDescription(newActivities, prev.collaborators, wa?.name ?? '');
-        return {
-          ...prev,
-          activities: newActivities,
-          description: descriptionManuallyEdited ? prev.description : newDescription,
-        };
-      });
-      setDescriptionManuallyEdited(false);
-      setCustomActivity('');
-      setValidationError('');
-    }
-  };
+
 
   const handleDescriptionChange = (value: string) => {
-    setDescriptionManuallyEdited(true);
     setForm(prev => ({ ...prev, description: value }));
     setValidationError('');
   };
 
   const handleSave = () => {
+    // Parse activities from text
+    const parsedActivities = activitiesText.split(',').map(a => a.trim()).filter(Boolean);
     if (!form.workAreaId) {
       setValidationError('Selecciona un área de trabajo');
       return;
     }
-    if (form.activities.length === 0) {
-      setValidationError('Selecciona al menos una actividad');
+    if (parsedActivities.length === 0) {
+      setValidationError('Ingresa al menos una actividad');
       return;
     }
-    if (!form.zoneName) {
-      setValidationError('Selecciona una zona');
+    if (!form.zoneName.trim()) {
+      setValidationError('Ingresa un lugar');
       return;
     }
     if (!form.description.trim()) {
-      setValidationError('Las observaciones son obligatorias');
+      setValidationError('La descripción del trabajo es obligatoria');
       return;
     }
     if (form.collaborators.length === 0) {
@@ -2826,7 +2768,7 @@ function ModalInner({
       return;
     }
     setValidationError('');
-    onSave(form);
+    onSave({ ...form, activities: parsedActivities });
   };
 
   return (
@@ -2848,15 +2790,21 @@ function ModalInner({
             placeholder="Seleccionar área de trabajo..."
           />
 
-          {/* 2. Activities (filtered by work area) */}
-          <MultiSelectActivities
-            selected={form.activities}
-            onToggle={isReadOnly ? () => {} : handleToggleActivity}
-            customActivity={customActivity}
-            onCustomActivityChange={isReadOnly ? () => {} : setCustomActivity}
-            onAddCustom={isReadOnly ? () => {} : handleAddCustomActivity}
-            availableActivities={filteredActivities}
-          />
+          {/* 2. Activities (manual text input) */}
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+              <Tag size={10} /> Actividades *
+            </label>
+            <textarea
+              className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-medium text-sm min-h-[60px] disabled:opacity-50"
+              placeholder="Ej: Corte De Pasto, Desmalezado, Riego"
+              value={activitiesText}
+              onChange={isReadOnly ? undefined : e => { setActivitiesText(e.target.value); setValidationError(''); }}
+              disabled={isReadOnly}
+              rows={2}
+            />
+            <p className="text-[9px] text-slate-400 mt-1 ml-1">Separa actividades con coma</p>
+          </div>
 
           {/* 3. Collaborators (all personnel available, area personnel shown first) */}
           <MultiSelectCollaborators
@@ -2866,16 +2814,20 @@ function ModalInner({
             selectedWorkAreaId={form.workAreaId}
           />
 
-          {/* 4. Zone */}
-          <Dropdown
-            label="Zona"
-            icon={MapPin}
-            options={zoneOptions}
-            selected={form.zoneName}
-            onSelect={isReadOnly ? () => {} : (z: string) => { setForm(prev => ({ ...prev, zoneName: z })); setValidationError(''); }}
-            placeholder="Seleccionar zona..."
-            searchable
-          />
+          {/* 4. Lugar */}
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+              <MapPin size={10} /> Lugar *
+            </label>
+            <input
+              type="text"
+              value={form.zoneName}
+              onChange={isReadOnly ? undefined : e => { setForm(prev => ({ ...prev, zoneName: e.target.value })); setValidationError(''); }}
+              placeholder="Ej: Entrada Norte, Piscina 1, Portería"
+              className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm disabled:opacity-50"
+              disabled={isReadOnly}
+            />
+          </div>
 
           {/* 4b. Planned Date */}
           <div>
@@ -2907,12 +2859,12 @@ function ModalInner({
             )}
           </div>
 
-          {/* 5. Observations (auto-generated but editable) */}
+          {/* 5. Descripción del trabajo */}
           <div>
-            <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Observaciones *</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Descripción del trabajo *</label>
             <textarea
               className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-medium text-sm min-h-[80px] disabled:opacity-50"
-              placeholder="Detalle de la tarea..."
+              placeholder="Describe el trabajo a realizar..."
               value={form.description}
               onChange={isReadOnly ? undefined : e => handleDescriptionChange(e.target.value)}
               disabled={isReadOnly}
@@ -3239,7 +3191,7 @@ async function buildPDF(ot: Partial<WorkOrder>) {
   const completedStr = ot.completedAt ? formatDateTime(ot.completedAt) : '—';
 
   y = drawTableRow('Actividad', activities, 'Fecha Creación', dateStr, y);
-  y = drawTableRow('Estado', ot.status ?? '', 'Zona', ot.zoneName ?? '', y);
+  y = drawTableRow('Estado', ot.status ?? '', 'Lugar', ot.zoneName ?? '', y);
   y = drawTableRow('Inicio', startedStr, 'Término', completedStr, y);
   y = drawTableRow('Codigo', ot.otId ?? '', 'Area', activities, y);
 
@@ -3269,14 +3221,14 @@ async function buildPDF(ot: Partial<WorkOrder>) {
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...navy);
   doc.setFontSize(10);
-  doc.text('OBSERVACIONES', m, y);
+  doc.text('DESCRIPCION DEL TRABAJO', m, y);
   y += 6;
   doc.setDrawColor(...navy);
   doc.setLineWidth(0.5);
   doc.line(m, y, pw - m, y);
   y += 10;
 
-  const descText = ot.description || 'Sin observaciones registradas';
+  const descText = ot.description || 'Sin descripción registrada';
   const splitDesc = doc.splitTextToSize(descText, cw - 24);
   const descH = Math.max(40, splitDesc.length * 11 + 18);
 
@@ -3544,7 +3496,7 @@ function AdminDashboard({
   // ─── Export CSV ───
   const exportCSV = () => {
     const BOM = '\uFEFF';
-    const headers = ['Código', 'Actividades', 'Responsables', 'Zona', 'Estado', 'Fecha Creación', 'Hora Creación', 'Fecha Inicio', 'Hora Inicio', 'Fecha Término', 'Hora Término', 'Tiempo Espera', 'Tiempo Proceso', 'Tiempo Total', 'Observaciones'];
+    const headers = ['Código', 'Actividades', 'Responsables', 'Lugar', 'Estado', 'Fecha Creación', 'Hora Creación', 'Fecha Inicio', 'Hora Inicio', 'Fecha Término', 'Hora Término', 'Tiempo Espera', 'Tiempo Proceso', 'Tiempo Total', 'Descripción del trabajo'];
     const rows = filteredOrders.map(o => {
       const wa = workAreas.find(wa => o.activities.some(a => wa.activities.includes(a)));
       return [
@@ -3662,7 +3614,7 @@ function AdminDashboard({
 
     // Table header
     const cols = [40, 100, 90, 55, 55, 65, 65, 65, 55, 55];
-    const colLabels = ['Codigo', 'Actividades', 'Responsables', 'Zona', 'Estado', 'Creacion', 'Inicio', 'Termino', 'T Espera', 'T Proceso'];
+    const colLabels = ['Codigo', 'Actividades', 'Responsables', 'Lugar', 'Estado', 'Creacion', 'Inicio', 'Termino', 'T Espera', 'T Proceso'];
     let x = m;
 
     doc.setFillColor(31, 40, 107);
@@ -4312,6 +4264,7 @@ function RecurringPanel({
   const [formName, setFormName] = useState('');
   const [formWorkAreaId, setFormWorkAreaId] = useState('');
   const [formActivities, setFormActivities] = useState<string[]>([]);
+  const [formActivitiesText, setFormActivitiesText] = useState('');
   const [formCollaborators, setFormCollaborators] = useState<string[]>([]);
   const [formZoneName, setFormZoneName] = useState('');
   const [formDescription, setFormDescription] = useState('');
@@ -4329,6 +4282,7 @@ function RecurringPanel({
     setFormName('');
     setFormWorkAreaId('');
     setFormActivities([]);
+    setFormActivitiesText('');
     setFormCollaborators([]);
     setFormZoneName('');
     setFormDescription('');
@@ -4347,6 +4301,7 @@ function RecurringPanel({
     setFormName(item.name);
     setFormWorkAreaId(item.workAreaId);
     setFormActivities([...item.activities]);
+    setFormActivitiesText(item.activities.join(', '));
     setFormCollaborators([...item.collaborators]);
     setFormZoneName(item.zoneName);
     setFormDescription(item.description);
@@ -4366,10 +4321,11 @@ function RecurringPanel({
     if (formFrequency === 'weekly' && formDaysOfWeek.length === 0) { showToast('Selecciona al menos un día', 'error'); return; }
     if (formFrequency === 'monthly' && (formDayOfMonth < 1 || formDayOfMonth > 31)) { showToast('Día del mes debe ser 1-31', 'error'); return; }
 
+    const parsedActivities = formActivitiesText.split(',').map(a => a.trim()).filter(Boolean);
     const data: Partial<RecurringWorkOrderItem> = {
       name: formName.trim(),
       workAreaId: formWorkAreaId,
-      activities: formActivities,
+      activities: parsedActivities,
       collaborators: formCollaborators,
       zoneName: formZoneName,
       description: formDescription,
@@ -4430,11 +4386,7 @@ function RecurringPanel({
     );
   };
 
-  const toggleActivity = (act: string) => {
-    setFormActivities(prev =>
-      prev.includes(act) ? prev.filter(a => a !== act) : [...prev, act]
-    );
-  };
+
 
   const toggleCollaborator = (name: string) => {
     setFormCollaborators(prev =>
@@ -4444,7 +4396,6 @@ function RecurringPanel({
 
   // Filtered data for form
   const selectedWorkArea = workAreas.find(wa => wa.id === formWorkAreaId);
-  const availableActivities = selectedWorkArea ? selectedWorkArea.activities : [];
   const availableCollaborators = personnel.map(p => ({
     name: p.name,
     workAreaName: workAreas.find(wa => wa.id === p.workAreaId)?.name ?? 'Sin área',
@@ -4476,7 +4427,7 @@ function RecurringPanel({
   const WIZARD_STEPS = [
     { num: 1, label: 'Nombre' },
     { num: 2, label: 'Actividades' },
-    { num: 3, label: 'Zona' },
+    { num: 3, label: 'Lugar' },
     { num: 4, label: 'Frecuencia' },
     { num: 5, label: 'Confirmar' },
   ];
@@ -4592,6 +4543,7 @@ function RecurringPanel({
                       const wa = workAreas.find(w => w.name === val);
                       setFormWorkAreaId(wa?.id ?? '');
                       setFormActivities([]);
+                      setFormActivitiesText('');
                       setFormCollaborators([]);
                     }}
                     placeholder="Seleccionar área..."
@@ -4603,32 +4555,19 @@ function RecurringPanel({
               {/* Step 2: Actividades + Colaboradores */}
               {wizardStep === 2 && (
                 <div className="space-y-4">
-                  {formWorkAreaId && availableActivities.length > 0 && (
-                    <div>
-                      <label className="text-xs font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
-                        <Tag size={10} /> Actividades
-                      </label>
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {availableActivities.map(act => {
-                          const isSelected = formActivities.includes(act);
-                          return (
-                            <button
-                              key={act}
-                              type="button"
-                              onClick={() => toggleActivity(act)}
-                              className={`px-4 py-3 rounded-2xl text-xs font-black uppercase transition-all active:scale-95 ${
-                                isSelected
-                                  ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
-                                  : 'bg-slate-50 text-slate-400 border border-slate-100'
-                              }`}
-                            >
-                              {act}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
+                  <div>
+                    <label className="text-xs font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+                      <Tag size={10} /> Actividades
+                    </label>
+                    <textarea
+                      value={formActivitiesText}
+                      onChange={e => setFormActivitiesText(e.target.value)}
+                      placeholder="Ej: Corte De Pasto, Desmalezado, Riego"
+                      rows={2}
+                      className="w-full p-4 mt-2 rounded-2xl bg-slate-50 border-none font-bold text-sm resize-none"
+                    />
+                    <p className="text-[9px] text-slate-400 mt-1 ml-1">Separa actividades con coma</p>
+                  </div>
                   {formWorkAreaId && (
                     <MultiSelectCollaborators
                       selected={formCollaborators}
@@ -4640,24 +4579,27 @@ function RecurringPanel({
                 </div>
               )}
 
-              {/* Step 3: Zona + Descripción */}
+              {/* Step 3: Lugar + Descripción del trabajo */}
               {wizardStep === 3 && (
                 <div className="space-y-4">
-                  <Dropdown
-                    label="Zona"
-                    icon={MapPin}
-                    options={zones.map(z => ({ value: z.name }))}
-                    selected={formZoneName}
-                    onSelect={setFormZoneName}
-                    placeholder="Seleccionar zona..."
-                    searchable
-                  />
                   <div>
-                    <label className="text-xs font-black text-slate-400 uppercase ml-1">Descripción</label>
+                    <label className="text-xs font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+                      <MapPin size={10} /> Lugar
+                    </label>
+                    <input
+                      type="text"
+                      value={formZoneName}
+                      onChange={e => setFormZoneName(e.target.value)}
+                      placeholder="Ej: Entrada Norte, Piscina 1, Portería"
+                      className="w-full p-4 mt-2 rounded-2xl bg-slate-50 border-none font-bold text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-black text-slate-400 uppercase ml-1">Descripción del trabajo</label>
                     <textarea
                       value={formDescription}
                       onChange={e => setFormDescription(e.target.value)}
-                      placeholder="Descripción de la OT..."
+                      placeholder="Describe el trabajo a realizar..."
                       rows={3}
                       className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm resize-none"
                     />
@@ -4741,11 +4683,11 @@ function RecurringPanel({
                         {getWorkAreaName(formWorkAreaId)}
                       </span>
                     </div>
-                    {formActivities.length > 0 && (
+                    {formActivitiesText.trim() && (
                       <div>
                         <span className="text-xs font-bold text-slate-400 uppercase block mb-1">Actividades</span>
                         <div className="flex flex-wrap gap-1">
-                          {formActivities.map(a => (
+                          {formActivitiesText.split(',').map(a => a.trim()).filter(Boolean).map(a => (
                             <span key={a} className="px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[9px] font-black">{a}</span>
                           ))}
                         </div>
@@ -4764,12 +4706,12 @@ function RecurringPanel({
                       </div>
                     )}
                     <div className="flex justify-between items-center">
-                      <span className="text-xs font-bold text-slate-400 uppercase">Zona</span>
+                      <span className="text-xs font-bold text-slate-400 uppercase">Lugar</span>
                       <span className="text-sm font-black text-slate-800">{formZoneName || '—'}</span>
                     </div>
                     {formDescription && (
                       <div>
-                        <span className="text-xs font-bold text-slate-400 uppercase block mb-1">Descripción</span>
+                        <span className="text-xs font-bold text-slate-400 uppercase block mb-1">Descripción del trabajo</span>
                         <p className="text-xs text-slate-600 font-medium">{formDescription}</p>
                       </div>
                     )}
