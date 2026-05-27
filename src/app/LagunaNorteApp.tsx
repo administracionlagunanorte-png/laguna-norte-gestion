@@ -7117,7 +7117,7 @@ function InventarioPanel({
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="flex flex-col flex-1">
       {/* Header */}
       <div className="bg-gradient-to-r from-purple-600 to-purple-700 text-white p-4 flex items-center gap-3">
         <button onClick={onBack} className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-colors active:scale-95">
@@ -7127,35 +7127,51 @@ function InventarioPanel({
           <h1 className="text-lg font-black uppercase tracking-tighter">Inventario</h1>
           <p className="text-[9px] font-bold text-purple-200 uppercase tracking-widest">Máquinas y Herramientas</p>
         </div>
-        <div className="flex items-center gap-2">
+        <button
+          onClick={() => { resetForm(); setShowFormModal(true); }}
+          className="p-2.5 bg-white/30 rounded-xl hover:bg-white/40 transition-colors active:scale-90"
+          title="Nuevo Item"
+        >
+          <Plus size={20} />
+        </button>
+        <div className="flex items-center gap-1">
           <button
             onClick={exportQrPdf}
             disabled={exporting}
-            className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-colors active:scale-95 disabled:opacity-50"
+            className="p-1.5 bg-white/20 rounded-lg hover:bg-white/30 transition-colors active:scale-95 disabled:opacity-50"
             title="Exportar QRs PDF"
           >
-            <QrCode size={18} />
+            <QrCode size={16} />
           </button>
           <button
             onClick={exportToPdf}
             disabled={exporting}
-            className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-colors active:scale-95 disabled:opacity-50"
+            className="p-1.5 bg-white/20 rounded-lg hover:bg-white/30 transition-colors active:scale-95 disabled:opacity-50"
             title="Exportar PDF"
           >
-            <FileText size={18} />
+            <FileText size={16} />
           </button>
           <button
             onClick={exportToExcel}
             disabled={exporting}
-            className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-colors active:scale-95 disabled:opacity-50"
+            className="p-1.5 bg-white/20 rounded-lg hover:bg-white/30 transition-colors active:scale-95 disabled:opacity-50"
             title="Exportar Excel"
           >
-            <FileSpreadsheet size={18} />
+            <FileSpreadsheet size={16} />
           </button>
         </div>
       </div>
 
       <div className="flex-1 p-4 space-y-4 pb-24">
+        {/* Nuevo Item Button (prominent) */}
+        <button
+          onClick={() => { resetForm(); setShowFormModal(true); }}
+          className="w-full py-3.5 bg-purple-600 text-white font-black uppercase rounded-2xl text-sm shadow-lg shadow-purple-300/50 active:scale-95 transition-transform flex items-center justify-center gap-2"
+        >
+          <Plus size={18} />
+          Agregar Nuevo Item
+        </button>
+
         {/* Search & Filters */}
         <div className="space-y-3">
           <div className="flex items-center gap-2 px-4 py-3 bg-white rounded-2xl border border-slate-100 shadow-sm">
@@ -7330,7 +7346,7 @@ function InventarioPanel({
       {/* Floating Action Button */}
       <button
         onClick={() => { resetForm(); setShowFormModal(true); }}
-        className="fixed bottom-6 right-6 w-14 h-14 bg-purple-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-purple-300/50 active:scale-90 transition-transform z-50"
+        className="fixed bottom-6 right-6 w-14 h-14 bg-purple-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-purple-300/50 active:scale-90 transition-transform z-[60]"
       >
         <Plus size={28} />
       </button>
