@@ -12,7 +12,7 @@ export async function PUT(
     const body = await request.json();
     const {
       name, brand, model, serialNumber, category, location,
-      lastMaintenance, lastReview, nextMaintenance, status, notes,
+      lastMaintenance, lastReview, nextMaintenance, status, photo, notes,
       _performedBy, _profileId,
     } = body;
 
@@ -34,6 +34,7 @@ export async function PUT(
         ...(lastReview !== undefined && { lastReview: lastReview ? new Date(lastReview) : null }),
         ...(nextMaintenance !== undefined && { nextMaintenance: nextMaintenance ? new Date(nextMaintenance) : null }),
         ...(status !== undefined && { status }),
+        ...(photo !== undefined && { photo }),
         ...(notes !== undefined && { notes }),
       },
     });
@@ -63,6 +64,7 @@ export async function PUT(
       lastReview: updated.lastReview ? new Date(updated.lastReview).getTime() : null,
       nextMaintenance: updated.nextMaintenance ? new Date(updated.nextMaintenance).getTime() : null,
       status: updated.status,
+      photo: updated.photo || '',
       notes: updated.notes,
       qrCode: updated.qrCode,
       createdBy: updated.createdBy,

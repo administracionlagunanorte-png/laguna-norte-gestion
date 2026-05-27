@@ -139,6 +139,7 @@ model InventoryItem {
   lastReview          DateTime? // Fecha última revisión
   nextMaintenance     DateTime? // Fecha próximo mantenimiento
   status              String    @default("operativo") // operativo, en reparacion, fuera de servicio
+  photo               String    @default("") // Foto de la máquina/herramienta (base64 data URL)
   notes               String    @default("") // Notas adicionales
   qrCode              String    @unique // Unique QR code (e.g. "INV-0001")
   createdBy           String    @default("admin")

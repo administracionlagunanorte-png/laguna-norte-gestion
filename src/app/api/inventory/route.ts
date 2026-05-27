@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
       lastReview: item.lastReview ? new Date(item.lastReview).getTime() : null,
       nextMaintenance: item.nextMaintenance ? new Date(item.nextMaintenance).getTime() : null,
       status: item.status,
+      photo: item.photo || '',
       notes: item.notes,
       qrCode: item.qrCode,
       createdBy: item.createdBy,
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       name, brand, model, serialNumber, category, location,
-      lastMaintenance, lastReview, nextMaintenance, status, notes,
+      lastMaintenance, lastReview, nextMaintenance, status, photo, notes,
       _performedBy, _profileId,
     } = body;
 
@@ -93,6 +94,7 @@ export async function POST(request: NextRequest) {
         lastReview: lastReview ? new Date(lastReview) : null,
         nextMaintenance: nextMaintenance ? new Date(nextMaintenance) : null,
         status: status || 'operativo',
+        photo: photo || '',
         notes: notes || '',
         qrCode,
         createdBy: _performedBy || 'admin',
@@ -121,6 +123,7 @@ export async function POST(request: NextRequest) {
       lastReview: item.lastReview ? new Date(item.lastReview).getTime() : null,
       nextMaintenance: item.nextMaintenance ? new Date(item.nextMaintenance).getTime() : null,
       status: item.status,
+      photo: item.photo || '',
       notes: item.notes,
       qrCode: item.qrCode,
       createdBy: item.createdBy,

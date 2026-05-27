@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
         lastReview: item.lastReview ? new Date(item.lastReview).getTime() : null,
         nextMaintenance: item.nextMaintenance ? new Date(item.nextMaintenance).getTime() : null,
         status: item.status,
+        photo: item.photo || '',
         notes: item.notes,
         qrCode: item.qrCode,
         qrDataUrl: dataUrl,

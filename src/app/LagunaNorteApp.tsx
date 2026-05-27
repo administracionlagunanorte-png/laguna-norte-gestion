@@ -201,6 +201,7 @@ interface InventoryItemData {
   lastReview: number | null;
   nextMaintenance: number | null;
   status: string;
+  photo: string;
   notes: string;
   qrCode: string;
   createdBy: string;
@@ -6793,6 +6794,7 @@ function InventarioPanel({
   const [formLastReview, setFormLastReview] = useState('');
   const [formNextMaintenance, setFormNextMaintenance] = useState('');
   const [formStatus, setFormStatus] = useState('operativo');
+  const [formPhoto, setFormPhoto] = useState('');
   const [formNotes, setFormNotes] = useState('');
 
   // Load QR images for items
@@ -6837,6 +6839,7 @@ function InventarioPanel({
     setFormLastReview('');
     setFormNextMaintenance('');
     setFormStatus('operativo');
+    setFormPhoto('');
     setFormNotes('');
     setEditingItem(null);
     setShowFormModal(false);
@@ -6855,6 +6858,7 @@ function InventarioPanel({
       lastReview: formLastReview ? new Date(formLastReview).getTime() : null,
       nextMaintenance: formNextMaintenance ? new Date(formNextMaintenance).getTime() : null,
       status: formStatus,
+      photo: formPhoto,
       notes: formNotes.trim(),
     };
     if (editingItem) {
@@ -6876,6 +6880,7 @@ function InventarioPanel({
     setFormLastReview(item.lastReview ? new Date(item.lastReview).toISOString().slice(0, 10) : '');
     setFormNextMaintenance(item.nextMaintenance ? new Date(item.nextMaintenance).toISOString().slice(0, 10) : '');
     setFormStatus(item.status);
+    setFormPhoto(item.photo || '');
     setFormNotes(item.notes);
     setEditingItem(item);
     setShowFormModal(true);
@@ -6977,15 +6982,22 @@ function InventarioPanel({
 
         for (const item of catItems) {
           // Check if we need a new page
-          if (y > pageHeight - 60) {
+          if (y > pageHeight - 70) {
             doc.addPage();
             y = margin;
           }
 
           // Item card
-          const cardHeight = 55;
+          const cardHeight = item.photo ? 65 : 55;
           doc.setDrawColor(200, 200, 200);
           doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 3, 3, 'S');
+
+          // Photo (left side if exists)
+          if (item.photo) {
+            try {
+              doc.addImage(item.photo, 'JPEG', margin + 5, y + 5, 30, 30);
+            } catch { /* ignore */ }
+          }
 
           // QR Code (60x60mm on the right)
           if (item.qrDataUrl) {
@@ -6995,10 +7007,11 @@ function InventarioPanel({
           }
 
           // Item details
+          const detailX = item.photo ? margin + 38 : margin + 5;
           let detailY = y + 8;
           doc.setFontSize(11);
           doc.setFont('helvetica', 'bold');
-          doc.text(item.name || '', margin + 5, detailY);
+          doc.text(item.name || '', detailX, detailY);
           detailY += 5;
 
           doc.setFontSize(8);
@@ -7012,11 +7025,11 @@ function InventarioPanel({
             `Estado: ${item.status === 'operativo' ? 'Operativo' : item.status === 'en reparacion' ? 'En Reparación' : 'Fuera de Servicio'}`,
           ];
           for (const line of details) {
-            doc.text(line, margin + 5, detailY);
+            doc.text(line, detailX, detailY);
             detailY += 4;
           }
           if (item.notes) {
-            doc.text(`Notas: ${item.notes.substring(0, 80)}${item.notes.length > 80 ? '...' : ''}`, margin + 5, detailY);
+            doc.text(`Notas: ${item.notes.substring(0, 80)}${item.notes.length > 80 ? '...' : ''}`, detailX, detailY);
           }
 
           y += cardHeight + 5;
@@ -7271,9 +7284,11 @@ function InventarioPanel({
                 >
                   <div className={`absolute left-0 top-0 bottom-0 w-1 ${catColor}`}></div>
                   <div className="flex items-start gap-3 pl-2">
-                    {/* QR Thumbnail */}
+                    {/* Photo Thumbnail */}
                     <div className="flex-shrink-0">
-                      {qrImageMap[item.qrCode] ? (
+                      {item.photo ? (
+                        <img src={item.photo} alt={item.name} className="w-12 h-12 rounded-lg object-cover" />
+                      ) : qrImageMap[item.qrCode] ? (
                         <img src={qrImageMap[item.qrCode]} alt="QR" className="w-12 h-12 rounded-lg" />
                       ) : (
                         <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center">
@@ -7488,6 +7503,79 @@ function InventarioPanel({
                 />
               </div>
 
+              {/* Fotografía */}
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+                  <Camera size={10} /> Fotografía del Equipo
+                </label>
+                <div className="mt-2 space-y-2">
+                  {formPhoto ? (
+                    <div className="relative inline-block">
+                      <img src={formPhoto} alt="Foto del equipo" className="w-32 h-32 rounded-2xl object-cover border-2 border-purple-100" />
+                      <button
+                        type="button"
+                        onClick={() => setFormPhoto('')}
+                        className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-transform"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'image/*';
+                          input.capture = 'environment';
+                          input.onchange = async (e) => {
+                            const file = (e.target as HTMLInputElement).files?.[0];
+                            if (file) {
+                              try {
+                                const compressed = await compressImage(file, 800, 0.6);
+                                setFormPhoto(compressed);
+                              } catch (err) {
+                                console.error('Error processing image:', err);
+                              }
+                            }
+                          };
+                          input.click();
+                        }}
+                        className="flex-1 py-3 rounded-2xl border-2 border-dashed border-purple-300 bg-purple-50 flex flex-col items-center justify-center gap-1 text-purple-400 hover:border-purple-500 hover:text-purple-600 hover:bg-purple-100 transition-colors"
+                      >
+                        <Camera size={20} />
+                        <span className="text-[8px] font-black uppercase">Cámara</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'image/*';
+                          input.onchange = async (e) => {
+                            const file = (e.target as HTMLInputElement).files?.[0];
+                            if (file) {
+                              try {
+                                const compressed = await compressImage(file, 800, 0.6);
+                                setFormPhoto(compressed);
+                              } catch (err) {
+                                console.error('Error processing image:', err);
+                              }
+                            }
+                          };
+                          input.click();
+                        }}
+                        className="flex-1 py-3 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-1 text-slate-300 hover:border-emerald-400 hover:text-emerald-400 transition-colors"
+                      >
+                        <ImageIcon size={20} />
+                        <span className="text-[8px] font-black uppercase">Galería</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Notas */}
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Notas</label>
@@ -7517,7 +7605,7 @@ function InventarioPanel({
       {showQrModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center">
           <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowQrModal(null)} />
-          <div className="relative bg-white rounded-3xl p-6 w-80 max-w-[90vw] text-center">
+          <div className="relative bg-white rounded-3xl p-6 w-80 max-w-[90vw] text-center max-h-[90vh] overflow-y-auto">
             <button onClick={() => setShowQrModal(null)} className="absolute top-3 right-3 p-1.5 bg-slate-100 rounded-xl hover:bg-slate-200">
               <X size={16} />
             </button>
@@ -7528,6 +7616,13 @@ function InventarioPanel({
             <p className="text-xs text-slate-400 font-bold mb-4">
               {[showQrModal.brand, showQrModal.model].filter(Boolean).join(' — ') || 'Sin marca/modelo'}
             </p>
+            {/* Photo */}
+            {showQrModal.photo && (
+              <div className="mb-4">
+                <img src={showQrModal.photo} alt={showQrModal.name} className="w-full h-40 object-cover rounded-xl mx-auto" />
+              </div>
+            )}
+            {/* QR Code */}
             {qrImageMap[showQrModal.qrCode] ? (
               <img src={qrImageMap[showQrModal.qrCode]} alt="QR" className="w-48 h-48 mx-auto rounded-xl" />
             ) : (
