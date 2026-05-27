@@ -126,3 +126,28 @@ model QrScan {
   @@index([createdAt(sort: Desc)])
   @@index([profileId])
 }
+
+model InventoryItem {
+  id                  String    @id @default(cuid())
+  name                String    // Nombre de la máquina/herramienta
+  brand               String    @default("") // Marca
+  model               String    @default("") // Modelo
+  serialNumber        String    @default("") // Número de serie
+  category            String    @default("maquina") // maquina, herramienta, vehiculo, otro
+  location            String    @default("") // Ubicación física
+  lastMaintenance     DateTime? // Fecha último mantenimiento
+  lastReview          DateTime? // Fecha última revisión
+  nextMaintenance     DateTime? // Fecha próximo mantenimiento
+  status              String    @default("operativo") // operativo, en reparacion, fuera de servicio
+  notes               String    @default("") // Notas adicionales
+  qrCode              String    @unique // Unique QR code (e.g. "INV-0001")
+  createdBy           String    @default("admin")
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([qrCode])
+  @@index([name])
+  @@index([category])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+}

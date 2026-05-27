@@ -8,10 +8,11 @@ import {
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, ShieldCheck, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
   Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound, ScrollText,
-  QrCode, Scan, MapPinned, Wifi, WifiOff, Upload, CloudOff, CloudCheck, RefreshCcw, Printer, FileDown
+  QrCode, Scan, MapPinned, Wifi, WifiOff, Upload, CloudOff, CloudCheck, RefreshCcw, Printer, FileDown, Package, Wrench as WrenchIcon, Cog, AlertTriangle
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import jsPDF from 'jspdf';
+import * as XLSX from 'xlsx';
 
 /* ─── Data Structures ─── */
 
@@ -186,6 +187,25 @@ interface QrScanItem {
     location: string;
     code: string;
   } | null;
+}
+
+interface InventoryItemData {
+  id: string;
+  name: string;
+  brand: string;
+  model: string;
+  serialNumber: string;
+  category: string;
+  location: string;
+  lastMaintenance: number | null;
+  lastReview: number | null;
+  nextMaintenance: number | null;
+  status: string;
+  notes: string;
+  qrCode: string;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /* ─── Migration helper (backward compat) ─── */
@@ -984,6 +1004,80 @@ function useQrScans() {
   }, [fetchScans]);
 
   return { scans, loading, total, createScan, refetch: fetchScans };
+}
+
+/* ─── Custom Hook: useInventory ─── */
+
+function useInventory(performedBy?: string, profileId?: string) {
+  const [items, setItems] = useState<InventoryItemData[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchItems = useCallback(async (filters?: { category?: string; status?: string; search?: string }) => {
+    try {
+      const params = new URLSearchParams();
+      if (filters?.category) params.set('category', filters.category);
+      if (filters?.status) params.set('status', filters.status);
+      if (filters?.search) params.set('search', filters.search);
+
+      const res = await fetch(`/api/inventory?${params.toString()}`);
+      if (!res.ok) throw new Error('API not available');
+      const data = await res.json();
+      setItems(Array.isArray(data) ? data : []);
+    } catch {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchItems();
+  }, [fetchItems]);
+
+  const createItem = useCallback(async (data: Partial<InventoryItemData>): Promise<InventoryItemData | null> => {
+    try {
+      const res = await fetch('/api/inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        await fetchItems();
+        return created;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [fetchItems, performedBy, profileId]);
+
+  const updateItem = useCallback(async (id: string, data: Partial<InventoryItemData>): Promise<InventoryItemData | null> => {
+    try {
+      const res = await fetch(`/api/inventory/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        await fetchItems();
+        return updated;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [fetchItems, performedBy, profileId]);
+
+  const deleteItem = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/inventory/${id}?_performedBy=${encodeURIComponent(performedBy || 'admin')}&_profileId=${profileId || ''}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchItems();
+        return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  }, [fetchItems, performedBy, profileId]);
+
+  return { items, loading, createItem, updateItem, deleteItem, refetch: fetchItems };
 }
 
 /* ─── Custom Hook: useConfigData ─── */
@@ -6654,9 +6748,788 @@ function QrScannerView({
   );
 }
 
+/* ─── Inventario Panel ─── */
+
+const INVENTORY_CATEGORIES = [
+  { id: 'maquina', label: 'Máquina', icon: Cog, color: 'bg-purple-500' },
+  { id: 'herramienta', label: 'Herramienta', icon: WrenchIcon, color: 'bg-orange-500' },
+  { id: 'vehiculo', label: 'Vehículo', icon: Package, color: 'bg-blue-500' },
+  { id: 'otro', label: 'Otro', icon: Tag, color: 'bg-slate-500' },
+];
+
+const INVENTORY_STATUS: Record<string, { color: string; text: string; bg: string }> = {
+  'operativo': { color: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50' },
+  'en reparacion': { color: 'bg-amber-500', text: 'text-amber-600', bg: 'bg-amber-50' },
+  'fuera de servicio': { color: 'bg-red-500', text: 'text-red-600', bg: 'bg-red-50' },
+};
+
+function InventarioPanel({
+  onBack,
+  performedBy,
+  profileId,
+}: {
+  onBack: () => void;
+  performedBy: string;
+  profileId: string | undefined;
+}) {
+  const { items, loading, createItem, updateItem, deleteItem, refetch } = useInventory(performedBy, profileId);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterCategory, setFilterCategory] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [showFormModal, setShowFormModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<InventoryItemData | null>(null);
+  const [showQrModal, setShowQrModal] = useState<InventoryItemData | null>(null);
+  const [qrImageMap, setQrImageMap] = useState<Record<string, string>>({});
+  const [exporting, setExporting] = useState(false);
+
+  // Form state
+  const [formName, setFormName] = useState('');
+  const [formBrand, setFormBrand] = useState('');
+  const [formModel, setFormModel] = useState('');
+  const [formSerialNumber, setFormSerialNumber] = useState('');
+  const [formCategory, setFormCategory] = useState('maquina');
+  const [formLocation, setFormLocation] = useState('');
+  const [formLastMaintenance, setFormLastMaintenance] = useState('');
+  const [formLastReview, setFormLastReview] = useState('');
+  const [formNextMaintenance, setFormNextMaintenance] = useState('');
+  const [formStatus, setFormStatus] = useState('operativo');
+  const [formNotes, setFormNotes] = useState('');
+
+  // Load QR images for items
+  useEffect(() => {
+    items.forEach(async (item) => {
+      if (!qrImageMap[item.qrCode]) {
+        try {
+          const res = await fetch(`/api/qr-generate?code=${encodeURIComponent(item.qrCode)}&size=512`);
+          if (res.ok) {
+            const data = await res.json();
+            setQrImageMap(prev => ({ ...prev, [item.qrCode]: data.dataUrl }));
+          }
+        } catch { /* ignore */ }
+      }
+    });
+  }, [items]);
+
+  // Filter items
+  const filteredItems = items.filter(item => {
+    if (filterCategory && item.category !== filterCategory) return false;
+    if (filterStatus && item.status !== filterStatus) return false;
+    if (searchTerm.trim()) {
+      const q = searchTerm.toLowerCase();
+      return item.name.toLowerCase().includes(q)
+        || item.brand.toLowerCase().includes(q)
+        || item.model.toLowerCase().includes(q)
+        || item.serialNumber.toLowerCase().includes(q)
+        || item.location.toLowerCase().includes(q)
+        || item.qrCode.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const resetForm = () => {
+    setFormName('');
+    setFormBrand('');
+    setFormModel('');
+    setFormSerialNumber('');
+    setFormCategory('maquina');
+    setFormLocation('');
+    setFormLastMaintenance('');
+    setFormLastReview('');
+    setFormNextMaintenance('');
+    setFormStatus('operativo');
+    setFormNotes('');
+    setEditingItem(null);
+    setShowFormModal(false);
+  };
+
+  const handleSave = async () => {
+    if (!formName.trim()) return;
+    const data: Partial<InventoryItemData> = {
+      name: formName.trim(),
+      brand: formBrand.trim(),
+      model: formModel.trim(),
+      serialNumber: formSerialNumber.trim(),
+      category: formCategory,
+      location: formLocation.trim(),
+      lastMaintenance: formLastMaintenance ? new Date(formLastMaintenance).getTime() : null,
+      lastReview: formLastReview ? new Date(formLastReview).getTime() : null,
+      nextMaintenance: formNextMaintenance ? new Date(formNextMaintenance).getTime() : null,
+      status: formStatus,
+      notes: formNotes.trim(),
+    };
+    if (editingItem) {
+      await updateItem(editingItem.id, data);
+    } else {
+      await createItem(data);
+    }
+    resetForm();
+  };
+
+  const handleEdit = (item: InventoryItemData) => {
+    setFormName(item.name);
+    setFormBrand(item.brand);
+    setFormModel(item.model);
+    setFormSerialNumber(item.serialNumber);
+    setFormCategory(item.category);
+    setFormLocation(item.location);
+    setFormLastMaintenance(item.lastMaintenance ? new Date(item.lastMaintenance).toISOString().slice(0, 10) : '');
+    setFormLastReview(item.lastReview ? new Date(item.lastReview).toISOString().slice(0, 10) : '');
+    setFormNextMaintenance(item.nextMaintenance ? new Date(item.nextMaintenance).toISOString().slice(0, 10) : '');
+    setFormStatus(item.status);
+    setFormNotes(item.notes);
+    setEditingItem(item);
+    setShowFormModal(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (confirm('¿Eliminar este item del inventario?')) {
+      await deleteItem(id);
+    }
+  };
+
+  // Export to Excel
+  const exportToExcel = async () => {
+    try {
+      setExporting(true);
+      const wsData = filteredItems.map(item => ({
+        'Código QR': item.qrCode,
+        'Nombre': item.name,
+        'Marca': item.brand,
+        'Modelo': item.model,
+        'N° Serie': item.serialNumber,
+        'Categoría': INVENTORY_CATEGORIES.find(c => c.id === item.category)?.label || item.category,
+        'Ubicación': item.location,
+        'Último Mantenimiento': item.lastMaintenance ? formatDate(item.lastMaintenance) : '',
+        'Última Revisión': item.lastReview ? formatDate(item.lastReview) : '',
+        'Próximo Mantenimiento': item.nextMaintenance ? formatDate(item.nextMaintenance) : '',
+        'Estado': item.status === 'operativo' ? 'Operativo' : item.status === 'en reparacion' ? 'En Reparación' : 'Fuera de Servicio',
+        'Notas': item.notes,
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(wsData);
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 12 }, { wch: 30 }, { wch: 20 }, { wch: 20 }, { wch: 20 },
+        { wch: 15 }, { wch: 25 }, { wch: 18 }, { wch: 18 }, { wch: 18 },
+        { wch: 18 }, { wch: 40 },
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+      XLSX.writeFile(wb, `Inventario_LagunaNorte_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (error) {
+      console.error('Error exporting to Excel:', error);
+      alert('Error al exportar a Excel');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Export to PDF with QR codes
+  const exportToPdf = async () => {
+    try {
+      setExporting(true);
+      // Fetch items with QR images from API
+      const res = await fetch('/api/inventory/export?format=pdf');
+      if (!res.ok) throw new Error('Error fetching data');
+      const { items: exportItems } = await res.json();
+
+      if (exportItems.length === 0) {
+        alert('No hay items para exportar');
+        return;
+      }
+
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+      const pageWidth = 215.9;
+      const pageHeight = 279.4;
+      const margin = 15;
+      let y = margin;
+
+      // Title
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Inventario - Laguna Norte', pageWidth / 2, y, { align: 'center' });
+      y += 8;
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Generado: ${new Date().toLocaleDateString('es-CL')}`, pageWidth / 2, y, { align: 'center' });
+      y += 10;
+
+      // Items grouped by category
+      const catGroups: Record<string, typeof exportItems> = {};
+      for (const item of exportItems) {
+        const cat = item.category || 'otro';
+        if (!catGroups[cat]) catGroups[cat] = [];
+        catGroups[cat].push(item);
+      }
+
+      for (const [cat, catItems] of Object.entries(catGroups)) {
+        const catLabel = INVENTORY_CATEGORIES.find(c => c.id === cat)?.label || cat;
+
+        // Category header
+        if (y > pageHeight - 50) {
+          doc.addPage();
+          y = margin;
+        }
+        doc.setFontSize(13);
+        doc.setFont('helvetica', 'bold');
+        doc.text(catLabel, margin, y);
+        y += 7;
+
+        for (const item of catItems) {
+          // Check if we need a new page
+          if (y > pageHeight - 60) {
+            doc.addPage();
+            y = margin;
+          }
+
+          // Item card
+          const cardHeight = 55;
+          doc.setDrawColor(200, 200, 200);
+          doc.roundedRect(margin, y, pageWidth - margin * 2, cardHeight, 3, 3, 'S');
+
+          // QR Code (60x60mm on the right)
+          if (item.qrDataUrl) {
+            try {
+              doc.addImage(item.qrDataUrl, 'PNG', pageWidth - margin - 50, y + 3, 45, 45);
+            } catch { /* ignore */ }
+          }
+
+          // Item details
+          let detailY = y + 8;
+          doc.setFontSize(11);
+          doc.setFont('helvetica', 'bold');
+          doc.text(item.name || '', margin + 5, detailY);
+          detailY += 5;
+
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'normal');
+          const details = [
+            `Código: ${item.qrCode}`,
+            `Marca: ${item.brand || '—'}  |  Modelo: ${item.model || '—'}`,
+            `N° Serie: ${item.serialNumber || '—'}`,
+            `Ubicación: ${item.location || '—'}`,
+            `Últ. Mantenimiento: ${item.lastMaintenance ? new Date(item.lastMaintenance).toLocaleDateString('es-CL') : '—'}  |  Últ. Revisión: ${item.lastReview ? new Date(item.lastReview).toLocaleDateString('es-CL') : '—'}`,
+            `Estado: ${item.status === 'operativo' ? 'Operativo' : item.status === 'en reparacion' ? 'En Reparación' : 'Fuera de Servicio'}`,
+          ];
+          for (const line of details) {
+            doc.text(line, margin + 5, detailY);
+            detailY += 4;
+          }
+          if (item.notes) {
+            doc.text(`Notas: ${item.notes.substring(0, 80)}${item.notes.length > 80 ? '...' : ''}`, margin + 5, detailY);
+          }
+
+          y += cardHeight + 5;
+        }
+      }
+
+      doc.save(`Inventario_LagunaNorte_${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (error) {
+      console.error('Error exporting to PDF:', error);
+      alert('Error al exportar a PDF');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Export QR codes only as PDF
+  const exportQrPdf = async () => {
+    try {
+      setExporting(true);
+      const res = await fetch('/api/inventory/export?format=pdf');
+      if (!res.ok) throw new Error('Error fetching data');
+      const { items: exportItems } = await res.json();
+
+      if (exportItems.length === 0) {
+        alert('No hay items para exportar');
+        return;
+      }
+
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+      const pageWidth = 215.9;
+      const pageHeight = 279.4;
+      const margin = 15;
+      const qrSize = 60; // 60x60mm QR code
+      const cols = 3;
+      const colWidth = (pageWidth - margin * 2) / cols;
+      let col = 0;
+      let y = margin;
+
+      // Title
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Códigos QR - Inventario Laguna Norte', pageWidth / 2, y, { align: 'center' });
+      y += 12;
+
+      for (const item of exportItems) {
+        // Check if we need a new page
+        if (y + qrSize + 20 > pageHeight - margin) {
+          doc.addPage();
+          y = margin;
+          col = 0;
+        }
+
+        const x = margin + col * colWidth;
+
+        // QR code
+        if (item.qrDataUrl) {
+          try {
+            doc.addImage(item.qrDataUrl, 'PNG', x + (colWidth - qrSize) / 2, y, qrSize, qrSize);
+          } catch { /* ignore */ }
+        }
+
+        // Label below QR
+        const labelY = y + qrSize + 4;
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.text(item.name || '', x + colWidth / 2, labelY, { align: 'center', maxWidth: colWidth - 4 });
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'normal');
+        doc.text(item.qrCode, x + colWidth / 2, labelY + 4, { align: 'center' });
+        if (item.brand || item.model) {
+          doc.text(`${item.brand || ''} ${item.model || ''}`.trim(), x + colWidth / 2, labelY + 8, { align: 'center', maxWidth: colWidth - 4 });
+        }
+
+        col++;
+        if (col >= cols) {
+          col = 0;
+          y += qrSize + 22;
+        }
+      }
+
+      doc.save(`QR_Inventario_LagunaNorte_${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (error) {
+      console.error('Error exporting QR PDF:', error);
+      alert('Error al exportar códigos QR');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const getCategoryIcon = (catId: string) => {
+    const cat = INVENTORY_CATEGORIES.find(c => c.id === catId);
+    return cat ? cat.icon : Tag;
+  };
+
+  const getCategoryColor = (catId: string) => {
+    const cat = INVENTORY_CATEGORIES.find(c => c.id === catId);
+    return cat ? cat.color : 'bg-slate-500';
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-purple-600 to-purple-700 text-white p-4 flex items-center gap-3">
+        <button onClick={onBack} className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-colors active:scale-95">
+          <ChevronLeft size={20} />
+        </button>
+        <div className="flex-1">
+          <h1 className="text-lg font-black uppercase tracking-tighter">Inventario</h1>
+          <p className="text-[9px] font-bold text-purple-200 uppercase tracking-widest">Máquinas y Herramientas</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={exportQrPdf}
+            disabled={exporting}
+            className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-colors active:scale-95 disabled:opacity-50"
+            title="Exportar QRs PDF"
+          >
+            <QrCode size={18} />
+          </button>
+          <button
+            onClick={exportToPdf}
+            disabled={exporting}
+            className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-colors active:scale-95 disabled:opacity-50"
+            title="Exportar PDF"
+          >
+            <FileText size={18} />
+          </button>
+          <button
+            onClick={exportToExcel}
+            disabled={exporting}
+            className="p-2 bg-white/20 rounded-xl hover:bg-white/30 transition-colors active:scale-95 disabled:opacity-50"
+            title="Exportar Excel"
+          >
+            <FileSpreadsheet size={18} />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 p-4 space-y-4 pb-24">
+        {/* Search & Filters */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 px-4 py-3 bg-white rounded-2xl border border-slate-100 shadow-sm">
+            <Search size={16} className="text-slate-400 flex-shrink-0" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              placeholder="Buscar por nombre, marca, modelo, serie, ubicación..."
+              className="flex-1 bg-transparent text-sm font-medium outline-none placeholder:text-slate-300"
+            />
+            {searchTerm && (
+              <button onClick={() => setSearchTerm('')} className="text-slate-400 hover:text-slate-600">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            {/* Category filter */}
+            <div className="flex-1">
+              <select
+                value={filterCategory}
+                onChange={e => setFilterCategory(e.target.value)}
+                className="w-full px-3 py-2 bg-white rounded-xl border border-slate-100 text-xs font-bold text-slate-600 outline-none"
+              >
+                <option value="">Todas las categorías</option>
+                {INVENTORY_CATEGORIES.map(cat => (
+                  <option key={cat.id} value={cat.id}>{cat.label}</option>
+                ))}
+              </select>
+            </div>
+            {/* Status filter */}
+            <div className="flex-1">
+              <select
+                value={filterStatus}
+                onChange={e => setFilterStatus(e.target.value)}
+                className="w-full px-3 py-2 bg-white rounded-xl border border-slate-100 text-xs font-bold text-slate-600 outline-none"
+              >
+                <option value="">Todos los estados</option>
+                <option value="operativo">Operativo</option>
+                <option value="en reparacion">En Reparación</option>
+                <option value="fuera de servicio">Fuera de Servicio</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="flex gap-2">
+          <div className="flex-1 bg-purple-50 border border-purple-100 p-2.5 rounded-2xl flex items-center gap-2">
+            <Package size={14} className="text-purple-500" />
+            <div>
+              <div className="text-lg font-black text-purple-600 leading-none">{items.length}</div>
+              <div className="text-[7px] font-bold text-purple-400 uppercase">Total</div>
+            </div>
+          </div>
+          <div className="flex-1 bg-emerald-50 border border-emerald-100 p-2.5 rounded-2xl flex items-center gap-2">
+            <CheckCircle2 size={14} className="text-emerald-500" />
+            <div>
+              <div className="text-lg font-black text-emerald-600 leading-none">{items.filter(i => i.status === 'operativo').length}</div>
+              <div className="text-[7px] font-bold text-emerald-400 uppercase">Operativos</div>
+            </div>
+          </div>
+          <div className="flex-1 bg-amber-50 border border-amber-100 p-2.5 rounded-2xl flex items-center gap-2">
+            <AlertTriangle size={14} className="text-amber-500" />
+            <div>
+              <div className="text-lg font-black text-amber-600 leading-none">{items.filter(i => i.status === 'en reparacion').length}</div>
+              <div className="text-[7px] font-bold text-amber-400 uppercase">Reparación</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Items List */}
+        {loading ? (
+          <div className="text-center py-12">
+            <div className="w-6 h-6 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+            <p className="text-slate-400 text-xs font-bold">Cargando inventario...</p>
+          </div>
+        ) : filteredItems.length === 0 ? (
+          <div className="text-center py-12">
+            <Package className="mx-auto text-slate-200 mb-3" size={40} />
+            <p className="text-slate-300 text-xs font-bold uppercase">No hay items en el inventario</p>
+            <p className="text-slate-300 text-[10px] mt-1">Presiona + para agregar el primero</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filteredItems.map(item => {
+              const CatIcon = getCategoryIcon(item.category);
+              const catColor = getCategoryColor(item.category);
+              const statusConf = INVENTORY_STATUS[item.status] || INVENTORY_STATUS['operativo'];
+              return (
+                <div
+                  key={item.id}
+                  className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm cursor-pointer relative overflow-hidden active:scale-[0.98] transition-transform"
+                  onClick={() => handleEdit(item)}
+                >
+                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${catColor}`}></div>
+                  <div className="flex items-start gap-3 pl-2">
+                    {/* QR Thumbnail */}
+                    <div className="flex-shrink-0">
+                      {qrImageMap[item.qrCode] ? (
+                        <img src={qrImageMap[item.qrCode]} alt="QR" className="w-12 h-12 rounded-lg" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center">
+                          <QrCode size={20} className="text-slate-300" />
+                        </div>
+                      )}
+                    </div>
+                    {/* Details */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-[9px] font-black bg-slate-100 px-2 py-0.5 rounded-full">{item.qrCode}</span>
+                        <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full text-white ${statusConf.color}`}>
+                          {item.status === 'operativo' ? 'Operativo' : item.status === 'en reparacion' ? 'Reparación' : 'Fuera de servicio'}
+                        </span>
+                      </div>
+                      <h4 className="font-black text-slate-800 uppercase truncate text-sm">{item.name}</h4>
+                      <div className="flex items-center gap-3 mt-0.5">
+                        {item.brand && (
+                          <p className="text-[10px] text-slate-400 font-bold uppercase">Marca: {item.brand}</p>
+                        )}
+                        {item.model && (
+                          <p className="text-[10px] text-slate-400 font-bold uppercase">Modelo: {item.model}</p>
+                        )}
+                      </div>
+                      {item.location && (
+                        <p className="text-[10px] text-blue-500 font-bold uppercase flex items-center gap-1 mt-0.5">
+                          <MapPin size={10} /> {item.location}
+                        </p>
+                      )}
+                      {(item.lastMaintenance || item.lastReview) && (
+                        <div className="flex items-center gap-3 mt-1">
+                          {item.lastMaintenance && (
+                            <span className="text-[8px] text-purple-500 font-bold flex items-center gap-0.5">
+                              <WrenchIcon size={8} /> Mant: {formatDate(item.lastMaintenance)}
+                            </span>
+                          )}
+                          {item.lastReview && (
+                            <span className="text-[8px] text-cyan-500 font-bold flex items-center gap-0.5">
+                              <Eye size={8} /> Rev: {formatDate(item.lastReview)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {/* Actions */}
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={e => { e.stopPropagation(); setShowQrModal(item); }}
+                        className="p-1.5 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+                        title="Ver QR"
+                      >
+                        <QrCode size={14} className="text-slate-500" />
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); handleDelete(item.id); }}
+                        className="p-1.5 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                        title="Eliminar"
+                      >
+                        <Trash2 size={14} className="text-red-400" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Floating Action Button */}
+      <button
+        onClick={() => { resetForm(); setShowFormModal(true); }}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-purple-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-purple-300/50 active:scale-90 transition-transform z-50"
+      >
+        <Plus size={28} />
+      </button>
+
+      {/* Form Modal */}
+      {showFormModal && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center">
+          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={resetForm} />
+          <div className="relative bg-white w-full max-w-xl rounded-t-3xl max-h-[90vh] overflow-y-auto animate-slide-up">
+            <div className="sticky top-0 bg-white p-4 border-b border-slate-100 flex items-center justify-between z-10">
+              <h2 className="text-lg font-black uppercase tracking-tighter text-slate-800">
+                {editingItem ? 'Editar Item' : 'Nuevo Item'}
+              </h2>
+              <button onClick={resetForm} className="p-2 bg-slate-100 rounded-xl hover:bg-slate-200">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              {/* Nombre */}
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Nombre *</label>
+                <input
+                  type="text"
+                  value={formName}
+                  onChange={e => setFormName(e.target.value)}
+                  placeholder="Ej: Cortadora de pasto Honda"
+                  className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                />
+              </div>
+
+              {/* Marca & Modelo */}
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Marca</label>
+                  <input
+                    type="text"
+                    value={formBrand}
+                    onChange={e => setFormBrand(e.target.value)}
+                    placeholder="Ej: Honda"
+                    className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Modelo</label>
+                  <input
+                    type="text"
+                    value={formModel}
+                    onChange={e => setFormModel(e.target.value)}
+                    placeholder="Ej: HRX476QXE"
+                    className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+              </div>
+
+              {/* N° Serie */}
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Número de Serie</label>
+                <input
+                  type="text"
+                  value={formSerialNumber}
+                  onChange={e => setFormSerialNumber(e.target.value)}
+                  placeholder="Ej: SN-12345"
+                  className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                />
+              </div>
+
+              {/* Categoría & Estado */}
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Categoría</label>
+                  <select
+                    value={formCategory}
+                    onChange={e => setFormCategory(e.target.value)}
+                    className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                  >
+                    {INVENTORY_CATEGORIES.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Estado</label>
+                  <select
+                    value={formStatus}
+                    onChange={e => setFormStatus(e.target.value)}
+                    className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                  >
+                    <option value="operativo">Operativo</option>
+                    <option value="en reparacion">En Reparación</option>
+                    <option value="fuera de servicio">Fuera de Servicio</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Ubicación */}
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 flex items-center gap-1">
+                  <MapPin size={10} /> Ubicación
+                </label>
+                <input
+                  type="text"
+                  value={formLocation}
+                  onChange={e => setFormLocation(e.target.value)}
+                  placeholder="Ej: Bodega principal"
+                  className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                />
+              </div>
+
+              {/* Fechas */}
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Último Mantenimiento</label>
+                  <input
+                    type="date"
+                    value={formLastMaintenance}
+                    onChange={e => setFormLastMaintenance(e.target.value)}
+                    className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Última Revisión</label>
+                  <input
+                    type="date"
+                    value={formLastReview}
+                    onChange={e => setFormLastReview(e.target.value)}
+                    className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+              </div>
+
+              {/* Próximo Mantenimiento */}
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Próximo Mantenimiento</label>
+                <input
+                  type="date"
+                  value={formNextMaintenance}
+                  onChange={e => setFormNextMaintenance(e.target.value)}
+                  className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                />
+              </div>
+
+              {/* Notas */}
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Notas</label>
+                <textarea
+                  value={formNotes}
+                  onChange={e => setFormNotes(e.target.value)}
+                  placeholder="Observaciones adicionales..."
+                  rows={3}
+                  className="w-full p-3 rounded-2xl bg-slate-50 border-none font-bold text-sm outline-none focus:ring-2 focus:ring-purple-300 resize-none"
+                />
+              </div>
+
+              {/* Save Button */}
+              <button
+                onClick={handleSave}
+                disabled={!formName.trim()}
+                className="w-full py-4 bg-purple-600 text-white font-black uppercase rounded-2xl text-sm shadow-lg shadow-purple-300/50 active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {editingItem ? 'Guardar Cambios' : 'Crear Item'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR View Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowQrModal(null)} />
+          <div className="relative bg-white rounded-3xl p-6 w-80 max-w-[90vw] text-center">
+            <button onClick={() => setShowQrModal(null)} className="absolute top-3 right-3 p-1.5 bg-slate-100 rounded-xl hover:bg-slate-200">
+              <X size={16} />
+            </button>
+            <div className="mb-3">
+              <span className="text-[9px] font-black bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">{showQrModal.qrCode}</span>
+            </div>
+            <h3 className="text-lg font-black text-slate-800 uppercase mb-1">{showQrModal.name}</h3>
+            <p className="text-xs text-slate-400 font-bold mb-4">
+              {[showQrModal.brand, showQrModal.model].filter(Boolean).join(' — ') || 'Sin marca/modelo'}
+            </p>
+            {qrImageMap[showQrModal.qrCode] ? (
+              <img src={qrImageMap[showQrModal.qrCode]} alt="QR" className="w-48 h-48 mx-auto rounded-xl" />
+            ) : (
+              <div className="w-48 h-48 mx-auto rounded-xl bg-slate-100 flex items-center justify-center">
+                <QrCode size={48} className="text-slate-300" />
+              </div>
+            )}
+            <p className="text-[10px] text-slate-400 mt-3 font-bold">Escanea para identificar este equipo</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── View Type ─── */
 
-type AppView = 'main' | 'calendar' | 'recurring' | 'dashboard' | 'admin' | 'auditoria' | 'guardias' | 'scanner';
+type AppView = 'main' | 'calendar' | 'recurring' | 'dashboard' | 'admin' | 'auditoria' | 'guardias' | 'scanner' | 'inventario';
 
 /* ─── Hamburger Menu ─── */
 
@@ -6688,6 +7561,7 @@ function HamburgerMenu({
     { view: 'calendar', label: 'Calendario', emoji: '📅' },
     { view: 'recurring', label: 'OTs Repetitivas', emoji: '🔄', adminOnly: true },
     { view: 'dashboard', label: 'Dashboard', emoji: '📊', adminOnly: true, supervisorCanSee: true },
+    { view: 'inventario', label: 'Inventario', emoji: '🔧', adminOnly: true },
     { view: 'guardias', label: 'Guardias', emoji: '🔒', adminOnly: true, guardiaCanSee: true },
     { view: 'admin', label: 'Administración', emoji: '⚙️', adminOnly: true },
     { view: 'auditoria', label: 'Historial', emoji: '📜', adminOnly: true },
@@ -7736,6 +8610,15 @@ export default function LagunaNorteApp() {
           onBack={() => setCurrentView('guardias')}
           profileName={currentProfile.name}
           profileId={currentProfile.id}
+        />
+      )}
+
+      {/* ─── Inventario Full-Page View (Admin Only) ─── */}
+      {currentView === 'inventario' && (
+        <InventarioPanel
+          onBack={() => setCurrentView('main')}
+          performedBy={actualPerformedBy}
+          profileId={getProfileId()}
         />
       )}
 
