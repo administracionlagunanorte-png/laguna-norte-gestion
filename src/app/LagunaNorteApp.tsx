@@ -3438,6 +3438,300 @@ async function buildPDF(ot: Partial<WorkOrder>) {
   doc.save(`OT_${ot.otId ?? 'Reporte'}_Reporte.pdf`);
 }
 
+async function buildMassTerminadasPDF(ots: Partial<WorkOrder>[], title?: string) {
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const pw = 595.28;
+  const ph = 841.89;
+  const m = 40;
+  const cw = pw - m * 2;
+
+  const navy = [31, 40, 107];
+  const navyLight = [230, 233, 245];
+  const valueColor = [30, 30, 30];
+  const borderColor = [190, 195, 210];
+
+  // ─── Cover Page ───
+  let y = 40;
+
+  try {
+    const logo1 = await loadImageAsBase64('/logo-laguna.jpg');
+    doc.addImage(logo1, 'JPEG', pw / 2 - 65, y, 130, 52);
+  } catch { /* skip */ }
+  y += 72;
+
+  try {
+    const logo2 = await loadImageAsBase64('/logo-empresa.png');
+    doc.addImage(logo2, 'PNG', pw / 2 - 45, y, 90, 52);
+  } catch { /* skip */ }
+  y += 72;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...navy);
+  doc.setFontSize(9);
+  doc.text('C O N D O M I N I O   &   P A R Q U E', pw / 2, y, { align: 'center' });
+  y += 24;
+  doc.setFontSize(18);
+  doc.text('REPORTE MASIVO DE OPERACION', pw / 2, y, { align: 'center' });
+  y += 18;
+  doc.setFontSize(12);
+  doc.text('OTs TERMINADAS', pw / 2, y, { align: 'center' });
+  y += 24;
+
+  doc.setDrawColor(...navy);
+  doc.setLineWidth(1.5);
+  doc.line(m + 50, y, pw - m - 50, y);
+  y += 24;
+
+  // Summary box
+  doc.setFillColor(252, 252, 255);
+  doc.roundedRect(m + 40, y, cw - 80, 100, 6, 6, 'FD');
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...navy);
+  doc.text(`Total OTs Terminadas: ${ots.length}`, pw / 2, y + 30, { align: 'center' });
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...valueColor);
+  doc.text(`Generado: ${new Date().toLocaleDateString('es-CL', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`, pw / 2, y + 50, { align: 'center' });
+
+  // Count by area
+  const areaCounts: Record<string, number> = {};
+  for (const ot of ots) {
+    const acts = ot.activities ?? [];
+    for (const a of acts) {
+      areaCounts[a] = (areaCounts[a] || 0) + 1;
+    }
+  }
+  const topAreas = Object.entries(areaCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  if (topAreas.length > 0) {
+    doc.setFontSize(7);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Actividades: ${topAreas.map(([a, c]) => `${a} (${c})`).join('  |  ')}`, pw / 2, y + 70, { align: 'center' });
+  }
+
+  if (title) {
+    doc.setFontSize(8);
+    doc.text(title, pw / 2, y + 86, { align: 'center' });
+  }
+
+  y += 130;
+  doc.setFontSize(7);
+  doc.setTextColor(150, 150, 150);
+  doc.text('Documento generado automáticamente por Sistema de Gestión Laguna Norte', pw / 2, y, { align: 'center' });
+  doc.text('Administración - Asesorías Integrales CyJ', pw / 2, y + 10, { align: 'center' });
+
+  addPageFooter(doc, pw, ph);
+
+  // ─── Individual OT pages ───
+  for (let idx = 0; idx < ots.length; idx++) {
+    const ot = ots[idx];
+    doc.addPage();
+    y = 30;
+
+    // Header with logos
+    try {
+      const logo1 = await loadImageAsBase64('/logo-laguna.jpg');
+      doc.addImage(logo1, 'JPEG', m, y, 100, 40);
+    } catch { /* skip */ }
+
+    try {
+      const logo2 = await loadImageAsBase64('/logo-empresa.png');
+      doc.addImage(logo2, 'PNG', pw - m - 70, y, 70, 40);
+    } catch { /* skip */ }
+    y += 48;
+
+    // OT header
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...navy);
+    doc.setFontSize(7);
+    doc.text('C O N D O M I N I O   &   P A R Q U E', pw / 2, y, { align: 'center' });
+    y += 12;
+    doc.setFontSize(11);
+    doc.text(`REPORTE DE OPERACION  —  ${ot.otId ?? ''}`, pw / 2, y, { align: 'center' });
+    y += 10;
+    doc.setFontSize(8);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`OT ${idx + 1} de ${ots.length}`, pw / 2, y, { align: 'center' });
+    y += 10;
+
+    doc.setDrawColor(...navy);
+    doc.setLineWidth(1.2);
+    doc.line(m, y, pw - m, y);
+    y += 12;
+
+    // Info table
+    const tblX = m;
+    const tblW = cw;
+    const labelColW = 90;
+    const halfW = tblW / 2;
+    const valColW = halfW - labelColW;
+    const rowH = 22;
+
+    function drawTableRow(
+      label1: string, value1: string,
+      label2: string, value2: string,
+      rowY: number
+    ): number {
+      doc.setFillColor(252, 252, 255);
+      doc.rect(tblX, rowY, tblW, rowH, 'F');
+      doc.setFillColor(...navyLight);
+      doc.rect(tblX, rowY, labelColW, rowH, 'F');
+      doc.setFillColor(...navyLight);
+      doc.rect(tblX + halfW, rowY, labelColW, rowH, 'F');
+      doc.setDrawColor(...borderColor);
+      doc.setLineWidth(0.3);
+      doc.rect(tblX, rowY, tblW, rowH, 'S');
+      doc.line(tblX + halfW, rowY, tblX + halfW, rowY + rowH);
+      doc.line(tblX + labelColW, rowY, tblX + labelColW, rowY + rowH);
+      doc.line(tblX + halfW + labelColW, rowY, tblX + halfW + labelColW, rowY + rowH);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(...navy);
+      doc.text(label1, tblX + 6, rowY + 14);
+      doc.text(label2, tblX + halfW + 6, rowY + 14);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(...valueColor);
+      const v1 = doc.splitTextToSize(value1, valColW - 12);
+      const v2 = doc.splitTextToSize(value2, valColW - 12);
+      doc.text(v1[0] || '', tblX + labelColW + 6, rowY + 14);
+      doc.text(v2[0] || '', tblX + halfW + labelColW + 6, rowY + 14);
+      return rowY + rowH;
+    }
+
+    doc.setFillColor(...navy);
+    doc.rect(tblX, y, tblW, rowH, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(255, 255, 255);
+    doc.text('INFORMACION DE LA ORDEN', tblX + 6, y + 14);
+    doc.text('DETALLE', tblX + halfW + 6, y + 14);
+    y += rowH;
+
+    const activities = (ot.activities ?? []).join(', ');
+    const collaborators = (ot.collaborators ?? []).join(', ');
+    const dateStr = ot.createdAt ? formatDate(ot.createdAt) : '';
+    const startedStr = ot.startedAt ? formatDateTime(ot.startedAt) : '—';
+    const completedStr = ot.completedAt ? formatDateTime(ot.completedAt) : '—';
+    const durationStr = (ot.startedAt && ot.completedAt) ? formatDuration(ot.completedAt - ot.startedAt) : '—';
+
+    y = drawTableRow('Actividad', activities, 'Fecha Creación', dateStr, y);
+    y = drawTableRow('Estado', ot.status ?? '', 'Lugar', ot.zoneName ?? '', y);
+    y = drawTableRow('Inicio', startedStr, 'Término', completedStr, y);
+    y = drawTableRow('Duración', durationStr, 'Código', ot.otId ?? '', y);
+
+    // Responsables row
+    const respSplit = doc.splitTextToSize(collaborators, tblW - labelColW - 12);
+    const respH = Math.max(rowH, respSplit.length * 10 + 10);
+    doc.setFillColor(252, 252, 255);
+    doc.rect(tblX, y, tblW, respH, 'F');
+    doc.setFillColor(...navyLight);
+    doc.rect(tblX, y, labelColW, respH, 'F');
+    doc.setDrawColor(...borderColor);
+    doc.setLineWidth(0.3);
+    doc.rect(tblX, y, tblW, respH, 'S');
+    doc.line(tblX + labelColW, y, tblX + labelColW, y + respH);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(...navy);
+    doc.text('Responsables', tblX + 6, y + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...valueColor);
+    doc.text(respSplit, tblX + labelColW + 6, y + 12);
+    y += respH + 12;
+
+    // Description
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...navy);
+    doc.setFontSize(9);
+    doc.text('DESCRIPCION DEL TRABAJO', m, y);
+    y += 5;
+    doc.setDrawColor(...navy);
+    doc.setLineWidth(0.4);
+    doc.line(m, y, pw - m, y);
+    y += 8;
+
+    const descText = ot.description || 'Sin descripción registrada';
+    const splitDesc = doc.splitTextToSize(descText, cw - 24);
+    const descH = Math.max(35, splitDesc.length * 10 + 14);
+    doc.setDrawColor(...borderColor);
+    doc.setLineWidth(0.3);
+    doc.setFillColor(252, 252, 255);
+    doc.roundedRect(m, y, cw, descH, 3, 3, 'FD');
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...valueColor);
+    doc.setFontSize(8);
+    doc.text(splitDesc, m + 10, y + 12);
+    y += descH + 14;
+
+    // Photos
+    const photoW = (cw - 16) / 2;
+    const photoH = photoW * 0.65;
+    const minSpaceNeeded = photoH + 40;
+
+    if (y + minSpaceNeeded > ph - 50) {
+      addPageFooter(doc, pw, ph);
+      doc.addPage();
+      y = 40;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...navy);
+    doc.setFontSize(9);
+    doc.text('EVIDENCIA FOTOGRAFICA', pw / 2, y, { align: 'center' });
+    y += 5;
+    doc.setDrawColor(...navy);
+    doc.setLineWidth(0.4);
+    doc.line(m, y, pw - m, y);
+    y += 10;
+
+    const gap = 16;
+    const beforeX = m;
+    const afterX = m + photoW + gap;
+
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...navy);
+    doc.text('ANTES', beforeX + photoW / 2, y, { align: 'center' });
+    doc.text('DESPUES', afterX + photoW / 2, y, { align: 'center' });
+    y += 7;
+
+    doc.setDrawColor(...borderColor);
+    doc.setFillColor(245, 246, 250);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(beforeX, y, photoW, photoH, 3, 3, 'FD');
+    doc.roundedRect(afterX, y, photoW, photoH, 3, 3, 'FD');
+
+    const photosBefore = ot.photosBefore ?? [];
+    const photosAfter = ot.photosAfter ?? [];
+
+    if (photosBefore.length > 0) {
+      try { doc.addImage(photosBefore[0], 'JPEG', beforeX + 2, y + 2, photoW - 4, photoH - 4); } catch { /* skip */ }
+    } else {
+      doc.setFontSize(7);
+      doc.setTextColor(180, 180, 180);
+      doc.setFont('helvetica', 'italic');
+      doc.text('Sin foto', beforeX + photoW / 2, y + photoH / 2, { align: 'center' });
+    }
+
+    if (photosAfter.length > 0) {
+      try { doc.addImage(photosAfter[0], 'JPEG', afterX + 2, y + 2, photoW - 4, photoH - 4); } catch { /* skip */ }
+    } else {
+      doc.setFontSize(7);
+      doc.setTextColor(180, 180, 180);
+      doc.setFont('helvetica', 'italic');
+      doc.text('Sin foto', afterX + photoW / 2, y + photoH / 2, { align: 'center' });
+    }
+
+    addPageFooter(doc, pw, ph);
+  }
+
+  const dateSuffix = new Date().toISOString().slice(0, 10);
+  doc.save(`OTs_Terminadas_Masivo_${dateSuffix}.pdf`);
+}
+
 /* ─── Main App (Unified Single Page) ─── */
 
 type StatusFilter = 'Todas' | 'Pendiente' | 'En Proceso' | 'Terminada';
@@ -4264,9 +4558,28 @@ function AdminDashboard({
                   >
                     <FileText size={16} /> Exportar PDF (Reporte)
                   </button>
+                  <button
+                    onClick={async () => {
+                      const terminadas = filteredOrders.filter(o => o.status === 'Terminada');
+                      if (terminadas.length === 0) {
+                        alert('No hay OTs terminadas para exportar');
+                        return;
+                      }
+                      try {
+                        await buildMassTerminadasPDF(terminadas);
+                      } catch (err) {
+                        console.error('Error exporting mass PDF:', err);
+                        alert('Error al generar el PDF masivo');
+                      }
+                    }}
+                    disabled={completedOrders.length === 0}
+                    className="w-full py-3 bg-emerald-600 text-white rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2 disabled:opacity-30 active:scale-95 transition-transform"
+                  >
+                    <FileDown size={16} /> PDF Masivo Terminadas ({completedOrders.length})
+                  </button>
                 </div>
                 <p className="text-[7px] text-slate-400 font-medium mt-2 text-center">
-                  CSV: Todas las OTs con fechas, horarios y tiempos | PDF: Reporte formateado con tabla resumen
+                  CSV: Todas las OTs con fechas, horarios y tiempos | PDF: Reporte formateado con tabla resumen | Masivo: PDF con cada OT terminada en página individual
                 </p>
               </div>
 
@@ -8435,6 +8748,25 @@ export default function LagunaNorteApp() {
               </div>
             )}
           </div>
+
+          {/* ─── Export Terminadas Mass Button ─── */}
+          {(userRole === 'admin' || isSupervisor) && visibleTerminadas > 0 && (
+            <button
+              onClick={async () => {
+                const terminadas = visibleWorkOrders.filter(o => o.status === 'Terminada');
+                if (terminadas.length === 0) return;
+                try {
+                  await buildMassTerminadasPDF(terminadas);
+                } catch (err) {
+                  console.error('Error exporting mass PDF:', err);
+                  alert('Error al generar el PDF masivo');
+                }
+              }}
+              className="w-full py-3 bg-emerald-600 text-white rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 shadow-lg shadow-emerald-300/30 active:scale-95 transition-transform"
+            >
+              <FileDown size={16} /> Exportar {visibleTerminadas} OTs Terminadas en PDF
+            </button>
+          )}
 
           {/* ─── Quick Create Categories ─── */}
           {canCreate && (
