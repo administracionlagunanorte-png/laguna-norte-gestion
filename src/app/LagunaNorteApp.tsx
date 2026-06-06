@@ -3821,15 +3821,17 @@ function AdminDashboard({
     const personOrders = filteredOrders.filter(o =>
       o.collaborators.includes(p.name)
     );
-    const completedByPerson = personOrders.filter(o => o.status === 'Terminada' && o.completedAt);
+    const completedByPerson = personOrders.filter(o => o.status === 'Terminada');
     const inProcessByPerson = personOrders.filter(o => o.status === 'En Proceso');
     const pendingByPerson = personOrders.filter(o => o.status === 'Pendiente');
 
-    const avgTime = completedByPerson.length > 0
-      ? completedByPerson.reduce((sum, o) => sum + calcWorkingMs(o.startedAt ?? o.createdAt, o.completedAt!, schedule), 0) / completedByPerson.length
+    // For time calculations, only use completed OTs that have both startedAt and completedAt
+    const completedWithTimes = completedByPerson.filter(o => o.startedAt && o.completedAt);
+    const avgTime = completedWithTimes.length > 0
+      ? completedWithTimes.reduce((sum, o) => sum + calcWorkingMs(o.startedAt!, o.completedAt!, schedule), 0) / completedWithTimes.length
       : 0;
 
-    const totalTime = completedByPerson.reduce((sum, o) => sum + calcWorkingMs(o.startedAt ?? o.createdAt, o.completedAt!, schedule), 0);
+    const totalTime = completedWithTimes.reduce((sum, o) => sum + calcWorkingMs(o.startedAt!, o.completedAt!, schedule), 0);
 
     return {
       id: p.id,
@@ -3843,19 +3845,21 @@ function AdminDashboard({
       avgTime,
       totalTime,
     };
-  }).filter(pm => pm.totalOrders > 0 || !hasActiveFilters).sort((a, b) => b.totalOrders - a.totalOrders);
+  }).filter(pm => pm.totalOrders > 0).sort((a, b) => b.totalOrders - a.totalOrders);
 
   // Per-area metrics (on filtered data)
   const areaMetrics = workAreas.map(wa => {
     const areaOrders = filteredOrders.filter(o =>
       o.activities.some(a => wa.activities.includes(a))
     );
-    const completedArea = areaOrders.filter(o => o.status === 'Terminada' && o.completedAt);
+    const completedArea = areaOrders.filter(o => o.status === 'Terminada');
     const inProcessArea = areaOrders.filter(o => o.status === 'En Proceso');
     const pendingArea = areaOrders.filter(o => o.status === 'Pendiente');
 
-    const avgTime = completedArea.length > 0
-      ? completedArea.reduce((sum, o) => sum + calcWorkingMs(o.startedAt ?? o.createdAt, o.completedAt!, schedule), 0) / completedArea.length
+    // For time calculations, only use completed OTs that have both startedAt and completedAt
+    const completedWithTimes = completedArea.filter(o => o.startedAt && o.completedAt);
+    const avgTime = completedWithTimes.length > 0
+      ? completedWithTimes.reduce((sum, o) => sum + calcWorkingMs(o.startedAt!, o.completedAt!, schedule), 0) / completedWithTimes.length
       : 0;
 
     return {
@@ -3868,7 +3872,7 @@ function AdminDashboard({
       pending: pendingArea.length,
       avgTime,
     };
-  }).filter(am => am.total > 0 || !hasActiveFilters).sort((a, b) => b.total - a.total);
+  }).filter(am => am.total > 0).sort((a, b) => b.total - a.total);
 
   // Detailed OT list with time info (on filtered data) — show ALL orders, not just those with startedAt
   const ordersWithTime = filteredOrders
@@ -3922,13 +3926,14 @@ function AdminDashboard({
   // ─── Export Personnel Report CSV ───
   const exportPersonnelCSV = () => {
     const BOM = '\uFEFF';
-    const headers = ['Nombre', 'Área', 'OTs Totales', 'OTs Terminadas', 'OTs En Proceso', 'Tiempo Prom/OT', 'Tiempo Total Trabajado'];
+    const headers = ['Nombre', 'Área', 'OTs Totales', 'OTs Pendientes', 'OTs En Proceso', 'OTs Terminadas', 'Tiempo Prom/OT', 'Tiempo Total Trabajado'];
     const rows = personnelMetrics.map(pm => [
       `"${pm.name}"`,
       pm.workAreaName,
       pm.totalOrders,
-      pm.completedOrders,
+      pm.pendingOrders,
       pm.inProcessOrders,
+      pm.completedOrders,
       pm.avgTime > 0 ? formatWorkingDuration(pm.avgTime, schedule) : '',
       pm.totalTime > 0 ? formatWorkingDuration(pm.totalTime, schedule) : '',
     ].join(','));
@@ -4300,7 +4305,13 @@ function AdminDashboard({
               <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3 mb-2">
                 <p className="text-[9px] font-bold text-blue-600">Rendimiento del personal basado en tiempos registrados de las ordenes de trabajo</p>
               </div>
-              {personnelMetrics.map(pm => (
+              {personnelMetrics.length === 0 ? (
+                <div className="text-center py-12">
+                  <Users className="mx-auto text-slate-200 mb-3" size={40} />
+                  <p className="text-slate-300 text-xs font-bold uppercase">No hay personal con OTs asignadas</p>
+                </div>
+              ) : (
+              personnelMetrics.map(pm => (
                 <div key={pm.id} className="bg-slate-50 rounded-2xl p-3">
                   <div className="flex items-start justify-between mb-2">
                     <div>
@@ -4311,24 +4322,28 @@ function AdminDashboard({
                     </div>
                     <div className="text-right">
                       <p className="text-lg font-black text-blue-600">{pm.totalOrders}</p>
-                      <p className="text-[7px] font-bold text-slate-400 uppercase">OTs</p>
+                      <p className="text-[7px] font-bold text-slate-400 uppercase">OTs Total</p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="bg-white rounded-xl p-2">
-                      <p className="text-xs font-black text-emerald-600">{pm.completedOrders}</p>
-                      <p className="text-[7px] font-bold text-slate-400">Terminadas</p>
+                  <div className="grid grid-cols-4 gap-1.5 text-center">
+                    <div className="bg-red-50 rounded-xl p-2">
+                      <p className="text-xs font-black text-red-600">{pm.pendingOrders}</p>
+                      <p className="text-[6px] font-bold text-red-400 uppercase">Pend</p>
                     </div>
-                    <div className="bg-white rounded-xl p-2">
+                    <div className="bg-amber-50 rounded-xl p-2">
                       <p className="text-xs font-black text-amber-600">{pm.inProcessOrders}</p>
-                      <p className="text-[7px] font-bold text-slate-400">En Proceso</p>
+                      <p className="text-[6px] font-bold text-amber-400 uppercase">Proceso</p>
                     </div>
-                    <div className="bg-white rounded-xl p-2">
+                    <div className="bg-emerald-50 rounded-xl p-2">
+                      <p className="text-xs font-black text-emerald-600">{pm.completedOrders}</p>
+                      <p className="text-[6px] font-bold text-emerald-400 uppercase">Term</p>
+                    </div>
+                    <div className="bg-blue-50 rounded-xl p-2">
                       <p className="text-xs font-black text-blue-600">{pm.avgTime > 0 ? formatWorkingDuration(pm.avgTime, schedule) : '--'}</p>
-                      <p className="text-[7px] font-bold text-slate-400">Prom/OT</p>
+                      <p className="text-[6px] font-bold text-blue-400 uppercase">Prom/OT</p>
                     </div>
                   </div>
-                  {pm.avgTime > 0 && (
+                  {pm.totalTime > 0 && (
                     <div className="mt-2">
                       <div className="flex items-center justify-between text-[8px] font-bold text-slate-400 mb-1">
                         <span>Tiempo total trabajado</span>
@@ -4340,7 +4355,8 @@ function AdminDashboard({
                     </div>
                   )}
                 </div>
-              ))}
+              ))
+              )}
             </>
           )}
 
@@ -4596,7 +4612,7 @@ function AdminDashboard({
                   <FileSpreadsheet size={16} /> Reporte Personal CSV
                 </button>
                 <p className="text-[7px] text-slate-400 font-medium mt-2 text-center">
-                  Nombre, area, OTs totales, terminadas, en proceso, tiempo promedio, tiempo total
+                  Nombre, area, OTs totales, pendientes, en proceso, terminadas, tiempo promedio, tiempo total
                 </p>
               </div>
 
