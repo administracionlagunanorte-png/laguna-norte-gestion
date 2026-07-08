@@ -3,56 +3,117 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
-model WorkOrder {
-  id            String    @id
-  otId          String
-  activities    String[]  @default([])
-  collaborators String[]  @default([])
-  zoneName      String    @default("")
-  description   String    @default("")
-  status        String    @default("Pendiente")
-  plannedDate   DateTime?
-  photosBefore  String[]  @default([])
-  photosAfter   String[]  @default([])
-  recurringId   String?
-  startedAt     DateTime?
-  completedAt   DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+// ============================================
+// ESQUEMA — apunta a las MISMAS tablas de Aiven
+// que el sistema de escritorio condominios-cyj
+// SIN @relation para evitar errores de validación.
+// ============================================
 
-  @@index([otId])
-  @@index([status])
-  @@index([createdAt(sort: Desc)])
-  @@index([recurringId])
-  @@index([plannedDate])
+model OrdenTrabajo {
+  id              String   @id @default(cuid())
+  otNum           String   @unique
+  titulo          String
+  tipo            String   @default("Correctivo")
+  prioridad       String   @default("Media")
+  estado          String   @default("Pendiente")
+  ubicacion       String?
+  fechaInicio     String?
+  fechaLimite     String?
+  fechaInicioReal String?
+  fechaFinReal    String?
+  costoEstimado   Float    @default(0)
+  costoReal       Float    @default(0)
+  progreso        Int      @default(0)
+  descripcion     String?
+  tiempoEst       Int      @default(0)
+  tiempoReal      Int      @default(0)
+  valorHora       Float    @default(0)
+  notas           String?
+  esRecurrente    Boolean  @default(false)
+  formaPago       String?
+  estadoAprobacion String? @default("Pendiente")
+  fotosAntes      String?
+  fotosDespues    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  condominioId    String?
+  propiedadId     String?
+  asignadoId      String?
+  activoId        String?
+  centroCostoId   String?
+
+  @@index([condominioId, estado])
+  @@index([estadoAprobacion])
+  @@index([asignadoId])
+  @@index([createdAt])
+  @@index([fechaInicio])
 }
 
-model RecurringWorkOrder {
-  id              String     @id @default(cuid())
-  name            String
-  activities      String[]   @default([])
-  collaborators   String[]   @default([])
-  zoneName        String     @default("")
-  workAreaId      String
-  description     String     @default("")
-  frequency       String     @default("weekly")
-  daysOfWeek      Int[]      @default([])
-  dayOfMonth      Int?
-  status          String     @default("active")
-  lastGeneratedAt DateTime?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+model Personal {
+  id            String   @id @default(cuid())
+  nombre        String
+  rut           String?  @unique
+  cargo         String?
+  contrato      String   @default("Indefinido")
+  afp           String   @default("ProVida")
+  salud         String   @default("Fonasa")
+  mutual        String   @default("IST")
+  ccaf          String?
+  fechaIngreso  String?
+  sueldoBase    Float    @default(0)
+  movilizacion  Float    @default(0)
+  colacion      Float    @default(0)
+  viatico       Float    @default(0)
+  asigFamiliar  Float    @default(0)
+  estado        String   @default("Activo")
+  email         String?
+  telefono      String?
+  foto          String?
+  notas         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  condominioId  String?
 
-  @@index([status])
-  @@index([frequency])
+  @@index([estado])
 }
 
-model Profile {
+model Secuencia {
+  id        String   @id @default(cuid())
+  tabla     String   @unique
+  prefijo   String
+  ultimoNum Int      @default(0)
+  padding   Int      @default(3)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Condominio {
+  id           String   @id @default(cuid())
+  nombre       String
+  direccion    String?
+  comuna       String?
+  ciudad       String?
+  rut          String?
+  telefono     String?
+  email        String?
+  etapas       String?
+  estado       String   @default("Activo")
+  fechaInicio  String?
+  notas        String?
+  logo         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ============================================
+// MODELOS PROPIOS DE LA APP MÓVIL
+// ============================================
+
+model MovilProfile {
   id          String   @id @default(cuid())
   name        String
   password    String   @default("")
@@ -61,6 +122,7 @@ model Profile {
   icon        String   @default("")
   workAreaIds String[] @default([])
   permissions String[] @default(["view"])
+  personalId  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -68,87 +130,48 @@ model Profile {
   @@index([accessCode])
 }
 
-model Counter {
-  id    String @id @default("ot_counter")
-  value Int    @default(0)
-}
-
-model AuditLog {
+model MovilQrLocation {
   id          String   @id @default(cuid())
-  action      String   // CREATE, UPDATE, DELETE
-  entityType  String   // WorkOrder, Profile, RecurringWorkOrder, QrLocation
-  entityId    String   // ID of the affected entity
-  entityName  String   @default("") // Human-readable identifier (e.g., OT-0001, profile name)
-  changes     String   @default("{}") // JSON string of what changed (oldValues -> newValues)
-  performedBy String   @default("admin") // Who did it (profile name or "admin")
-  profileId   String?  // Profile ID if done by a profile user
-  createdAt   DateTime @default(now())
-
-  @@index([entityType])
-  @@index([action])
-  @@index([createdAt(sort: Desc)])
-  @@index([performedBy])
-  @@index([entityId])
-}
-
-model QrLocation {
-  id          String   @id @default(cuid())
-  name        String   // e.g. "Portería Principal", "Piscina 1"
-  description String   @default("") // Additional details
-  location    String   @default("") // e.g. "Sector A - Entrada Norte"
-  code        String   @unique // Unique code embedded in QR (e.g. "QR-LOC-001")
+  name        String
+  description String   @default("")
+  location    String   @default("")
+  code        String   @unique
   active      Boolean  @default(true)
   createdBy   String   @default("admin")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  scans       QrScan[]
-
   @@index([code])
   @@index([active])
-  @@index([createdAt(sort: Desc)])
 }
 
-model QrScan {
+model MovilQrScan {
   id           String    @id @default(cuid())
-  qrLocationId String    // Reference to the scanned QrLocation
-  scannedBy    String    @default("") // Name of the guard who scanned
-  profileId    String?   // Profile ID of the guard
-  latitude     Float?    // GPS latitude at scan time
-  longitude    Float?    // GPS longitude at scan time
-  notes        String    @default("") // Optional notes from the guard
+  qrLocationId String
+  scannedBy    String    @default("")
+  profileId    String?
+  latitude     Float?
+  longitude    Float?
+  notes        String    @default("")
   createdAt    DateTime  @default(now())
-
-  location     QrLocation @relation(fields: [qrLocationId], references: [id], onDelete: Cascade)
 
   @@index([qrLocationId])
   @@index([scannedBy])
-  @@index([createdAt(sort: Desc)])
-  @@index([profileId])
+  @@index([createdAt])
 }
 
-model InventoryItem {
-  id                  String    @id @default(cuid())
-  name                String    // Nombre de la máquina/herramienta
-  brand               String    @default("") // Marca
-  model               String    @default("") // Modelo
-  serialNumber        String    @default("") // Número de serie
-  category            String    @default("maquina") // maquina, herramienta, vehiculo, otro
-  location            String    @default("") // Ubicación física
-  lastMaintenance     DateTime? // Fecha último mantenimiento
-  lastReview          DateTime? // Fecha última revisión
-  nextMaintenance     DateTime? // Fecha próximo mantenimiento
-  status              String    @default("operativo") // operativo, en reparacion, fuera de servicio
-  photo               String    @default("") // Foto de la máquina/herramienta (base64 data URL)
-  notes               String    @default("") // Notas adicionales
-  qrCode              String    @unique // Unique QR code (e.g. "INV-0001")
-  createdBy           String    @default("admin")
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+model MovilAuditLog {
+  id          String   @id @default(cuid())
+  action      String
+  entityType  String
+  entityId    String
+  entityName  String   @default("")
+  changes     String   @default("{}")
+  performedBy String   @default("admin")
+  profileId   String?
+  createdAt   DateTime @default(now())
 
-  @@index([qrCode])
-  @@index([name])
-  @@index([category])
-  @@index([status])
-  @@index([createdAt(sort: Desc)])
+  @@index([entityType])
+  @@index([action])
+  @@index([createdAt])
 }

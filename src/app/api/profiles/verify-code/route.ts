@@ -1,62 +1,29 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { NextRequest, NextResponse } from 'next/server'
+import { db, withRetry } from '@/lib/db'
 
-// POST /api/profiles/verify-code — find a profile by access code
+// POST — verificar código de acceso (login con PIN)
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const code = (body.code || '').trim().toUpperCase();
+    const { code, password } = await request.json()
+    if (!code) return NextResponse.json({ error: 'Código requerido' }, { status: 400 })
 
-    if (!code) {
-      return NextResponse.json(
-        { error: 'Ingresa un código' },
-        { status: 400 }
-      );
-    }
+    const perfiles = await withRetry(() => db.movilProfile.findMany({ take: 200 }))
+    const perfil = perfiles.find(p => p.accessCode === code.trim())
+    if (!perfil) return NextResponse.json({ error: 'Código no válido' }, { status: 404 })
 
-    // Find profile with matching access code (case-insensitive)
-    const profiles = await db.profile.findMany();
-    const profile = profiles.find(p => p.accessCode.toUpperCase() === code);
-
-    if (!profile) {
-      return NextResponse.json(
-        { error: 'Código no válido' },
-        { status: 404 }
-      );
-    }
-
-    // If profile has a password, require it too
-    if (profile.password && body.password !== undefined) {
-      if (profile.password !== body.password) {
-        return NextResponse.json(
-          { error: 'Contraseña incorrecta', needsPassword: true },
-          { status: 401 }
-        );
-      }
+    if (perfil.password && perfil.password !== (password || '')) {
+      return NextResponse.json({ error: 'Contraseña incorrecta', profile: { id: perfil.id, name: perfil.name, needsPassword: true } }, { status: 401 })
     }
 
     return NextResponse.json({
-      success: true,
       profile: {
-        id: profile.id,
-        name: profile.name,
-        accessCode: profile.accessCode,
-        color: profile.color || '',
-        icon: profile.icon || '',
-        workAreaIds: Array.isArray(profile.workAreaIds) ? profile.workAreaIds : [],
-        permissions: Array.isArray(profile.permissions) ? profile.permissions : ['view'],
-        hasPassword: profile.password !== '',
-        hasAccessCode: profile.accessCode !== '',
-        needsPassword: profile.password !== '' && !body.password,
-        createdAt: new Date(profile.createdAt).getTime(),
-        updatedAt: new Date(profile.updatedAt).getTime(),
-      },
-    });
+        id: perfil.id, name: perfil.name, accessCode: perfil.accessCode,
+        color: perfil.color, icon: perfil.icon, workAreaIds: perfil.workAreaIds,
+        permissions: perfil.permissions, personalId: perfil.personalId,
+      }
+    })
   } catch (error) {
-    console.error('POST /api/profiles/verify-code error:', error);
-    return NextResponse.json(
-      { error: 'Error al verificar el código' },
-      { status: 500 }
-    );
+    console.error('Error verify-code:', error)
+    return NextResponse.json({ error: 'Error' }, { status: 500 })
   }
 }

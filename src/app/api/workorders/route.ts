@@ -1,50 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
-import { createAuditLog } from '@/app/api/audit/route';
+import { db, withRetry } from '@/lib/db';
 
-// Helper: serialize a DB row into a client-friendly WorkOrder object
-function serializeWorkOrder(row: {
+// Helper: serializar OrdenTrabajo → formato WorkOrder de la app móvil
+function serializeOT(ot: {
   id: string;
-  otId: string;
-  activities: string[];
-  collaborators: string[];
-  zoneName: string;
-  description: string;
-  status: string;
-  plannedDate: Date | null;
-  photosBefore: string[];
-  photosAfter: string[];
-  recurringId: string | null;
-  startedAt: Date | null;
-  completedAt: Date | null;
+  otNum: string;
+  titulo: string;
+  estado: string;
+  ubicacion: string | null;
+  descripcion: string | null;
+  fechaInicio: string | null;
+  fechaInicioReal: string | null;
+  fechaFinReal: string | null;
+  fotosAntes: string | null;
+  fotosDespues: string | null;
+  asignadoId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
   return {
-    id: row.id,
-    otId: row.otId,
-    activities: Array.isArray(row.activities) ? row.activities : [],
-    collaborators: Array.isArray(row.collaborators) ? row.collaborators : [],
-    zoneName: row.zoneName,
-    description: row.description,
-    status: row.status,
-    plannedDate: row.plannedDate ? new Date(row.plannedDate).getTime() : null,
-    startedAt: row.startedAt ? new Date(row.startedAt).getTime() : null,
-    completedAt: row.completedAt ? new Date(row.completedAt).getTime() : null,
-    createdAt: new Date(row.createdAt).getTime(),
-    photosBefore: Array.isArray(row.photosBefore) ? row.photosBefore : [],
-    photosAfter: Array.isArray(row.photosAfter) ? row.photosAfter : [],
-    recurringId: row.recurringId,
+    id: ot.id,
+    otId: ot.otNum,
+    activities: ot.titulo ? ot.titulo.split(', ').filter(Boolean) : [],
+    collaborators: ot.asignadoId ? [ot.asignadoId] : [],
+    zoneName: ot.ubicacion || '',
+    description: ot.descripcion || ot.titulo || '',
+    status: mapearEstadoMovil(ot.estado),
+    plannedDate: ot.fechaInicio ? new Date(ot.fechaInicio).getTime() : null,
+    startedAt: ot.fechaInicioReal ? new Date(ot.fechaInicioReal).getTime() : null,
+    completedAt: ot.fechaFinReal ? new Date(ot.fechaFinReal).getTime() : null,
+    createdAt: ot.createdAt.getTime(),
+    photosBefore: safeParseArray(ot.fotosAntes),
+    photosAfter: safeParseArray(ot.fotosDespues),
+    recurringId: null,
   };
 }
 
-// GET /api/workorders — return all work orders, newest first
+// GET — listar OTs desde OrdenTrabajo de Aiven
 export async function GET() {
   try {
-    const rows = await db.workOrder.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-    const workOrders = rows.map(serializeWorkOrder);
+    const ots = await withRetry(() =>
+      db.ordenTrabajo.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+      })
+    );
+    const workOrders = ots.map(serializeOT);
     return NextResponse.json(workOrders);
   } catch (error) {
     console.error('GET /api/workorders error:', error);
@@ -55,100 +56,88 @@ export async function GET() {
   }
 }
 
-// POST /api/workorders — create a new work order
-// The otId is generated atomically on the server to prevent duplicate numbers
+// POST — crear nueva OT en OrdenTrabajo de Aiven
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    const id = body.id || crypto.randomUUID();
     const activities = Array.isArray(body.activities) ? body.activities : [];
-    const collaborators = Array.isArray(body.collaborators) ? body.collaborators : [];
-    const zoneName = body.zoneName || '';
-    const description = body.description || '';
-    const status = body.status || 'Pendiente';
-    const photosBefore = Array.isArray(body.photosBefore) ? body.photosBefore : [];
-    const photosAfter = Array.isArray(body.photosAfter) ? body.photosAfter : [];
-    // Auto-set startedAt/completedAt based on initial status
-    const startedAt = status === 'En Proceso' || status === 'Terminada' ? new Date() : null;
-    const completedAt = status === 'Terminada' ? new Date() : null;
-    const plannedDate = body.plannedDate ? new Date(body.plannedDate) : null;
-    const recurringId = body.recurringId || null;
+    const titulo = activities.length > 0 ? activities.join(', ') : (body.description || 'OT Móvil');
+    const estado = mapearEstadoSistema(body.status || 'Pendiente');
 
-    // ─── Generate otId atomically on the server ───
-    // Always calculate from actual data to prevent duplicates and resets
-    const allOts = await db.workOrder.findMany({
-      select: { otId: true },
-    });
-    let maxNum = 0;
-    for (const ot of allOts) {
-      const num = parseInt(ot.otId.replace('OT-', ''), 10);
-      if (!isNaN(num) && num > maxNum) maxNum = num;
-    }
+    // Generar número de OT usando Secuencia (compartido con sistema escritorio)
+    const secuencia = await withRetry(() =>
+      db.secuencia.upsert({
+        where: { tabla: 'OrdenTrabajo' },
+        update: { ultimoNum: { increment: 1 } },
+        create: { tabla: 'OrdenTrabajo', prefijo: 'OT', ultimoNum: 1, padding: 4 },
+      })
+    );
+    const otNum = `OT-${String(secuencia.ultimoNum).padStart(4, '0')}`;
 
-    // Also check the Counter table for a higher value
-    let counter = await db.counter.findUnique({ where: { id: 'ot_counter' } });
-    if (counter && counter.value > maxNum) {
-      maxNum = counter.value;
-    }
+    // Auto-set timestamps
+    const ahora = new Date().toISOString();
+    const fechaInicioReal = (body.status === 'En Proceso' || body.status === 'Terminada') ? ahora : null;
+    const fechaFinReal = body.status === 'Terminada' ? ahora : null;
 
-    const nextNum = maxNum + 1;
-    const otId = body.otId || `OT-${String(nextNum).padStart(4, '0')}`;
+    const nuevaOT = await withRetry(() =>
+      db.ordenTrabajo.create({
+        data: {
+          otNum,
+          titulo,
+          tipo: 'Correctivo',
+          prioridad: 'Media',
+          estado,
+          ubicacion: body.zoneName || null,
+          descripcion: body.description || null,
+          fechaInicio: body.plannedDate ? new Date(body.plannedDate).toISOString().split('T')[0] : null,
+          fechaInicioReal,
+          fechaFinReal,
+          fotosAntes: body.photosBefore?.length > 0 ? JSON.stringify(body.photosBefore) : null,
+          fotosDespues: body.photosAfter?.length > 0 ? JSON.stringify(body.photosAfter) : null,
+          progreso: body.status === 'Terminada' ? 100 : (body.status === 'En Proceso' ? 50 : 0),
+          asignadoId: body.collaborators?.[0] || null,
+          estadoAprobacion: 'Pendiente',
+        },
+      })
+    );
 
-    // Update the counter to stay in sync
-    if (counter) {
-      await db.counter.update({
-        where: { id: 'ot_counter' },
-        data: { value: nextNum },
-      });
-    } else {
-      await db.counter.create({
-        data: { id: 'ot_counter', value: nextNum },
-      });
-    }
-
-    const row = await db.workOrder.create({
-      data: {
-        id,
-        otId,
-        activities,
-        collaborators,
-        zoneName,
-        description,
-        status,
-        plannedDate,
-        photosBefore,
-        photosAfter,
-        recurringId,
-        startedAt,
-        completedAt,
-      },
-    });
-
-    // Audit log: CREATE
-    const performedBy = body._performedBy || 'admin';
-    const profileId = body._profileId || null;
-    await createAuditLog({
-      action: 'CREATE',
-      entityType: 'WorkOrder',
-      entityId: id,
-      entityName: otId,
-      changes: {
-        otId: { old: null, new: otId },
-        status: { old: null, new: status },
-        activities: { old: null, new: activities },
-        zoneName: { old: null, new: zoneName },
-      },
-      performedBy,
-      profileId,
-    });
-
-    return NextResponse.json(serializeWorkOrder(row), { status: 201 });
+    return NextResponse.json(serializeOT(nuevaOT), { status: 201 });
   } catch (error) {
     console.error('POST /api/workorders error:', error);
     return NextResponse.json(
       { error: 'Error al crear la orden de trabajo' },
       { status: 500 }
     );
+  }
+}
+
+// Mapear estados: sistema escritorio ↔ app móvil
+function mapearEstadoMovil(estadoSistema: string): string {
+  const mapeo: Record<string, string> = {
+    'Pendiente': 'Pendiente',
+    'En Progreso': 'En Proceso',
+    'Completado': 'Terminada',
+    'Cancelado': 'Pendiente',
+  };
+  return mapeo[estadoSistema] || 'Pendiente';
+}
+
+function mapearEstadoSistema(estadoMovil: string): string {
+  const mapeo: Record<string, string> = {
+    'Pendiente': 'Pendiente',
+    'En Proceso': 'En Progreso',
+    'Terminada': 'Completado',
+  };
+  return mapeo[estadoMovil] || 'Pendiente';
+}
+
+function safeParseArray(str: string | null): string[] {
+  if (!str) return [];
+  try {
+    const parsed = JSON.parse(str);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
