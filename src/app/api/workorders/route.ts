@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, withRetry } from '@/lib/db';
 
+// Permitir bodies grandes para fotos en base64
+export const maxDuration = 60
+export const bodySizeLimit = '8mb'
+
 // Helper: serializar OrdenTrabajo → formato WorkOrder de la app móvil
 function serializeOT(ot: {
   id: string;

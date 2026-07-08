@@ -15,9 +15,13 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "*.neon.tech",
       },
+      {
+        protocol: "https",
+        hostname: "*.aivencloud.com",
+      },
     ],
   },
-  // Optimize for serverless (Vercel + Neon)
+  // Permitir bodies grandes para fotos en base64
   experimental: {
     serverActions: {
       bodySizeLimit: "10mb",

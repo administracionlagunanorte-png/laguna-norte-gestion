@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, withRetry } from '@/lib/db';
 
+// Permitir bodies grandes para fotos en base64
+export const maxDuration = 60
+export const bodySizeLimit = '8mb'
+
 // Helper: serializar OrdenTrabajo → formato WorkOrder
 function serializeOT(ot: any) {
   return {
@@ -40,11 +44,22 @@ export async function PUT(
     if (body.activities !== undefined) {
       data.titulo = Array.isArray(body.activities) ? body.activities.join(', ') : body.activities;
     }
-    if (body.zoneName !== undefined) data.ubicacion = body.zoneName;
-    if (body.description !== undefined) data.descripcion = body.description;
-    if (body.photosBefore !== undefined) data.fotosAntes = JSON.stringify(body.photosBefore);
-    if (body.photosAfter !== undefined) data.fotosDespues = JSON.stringify(body.photosAfter);
-    if (body.collaborators !== undefined) data.asignadoId = body.collaborators[0] || null;
+    if (body.zoneName !== undefined) data.ubicacion = body.zoneName || null;
+    if (body.description !== undefined) data.descripcion = body.description || null;
+    
+    // IMPORTANTE: siempre procesar fotos vengan o no, para no perderlas
+    if (body.photosBefore !== undefined) {
+      const fotos = Array.isArray(body.photosBefore) ? body.photosBefore : [];
+      data.fotosAntes = fotos.length > 0 ? JSON.stringify(fotos) : null;
+    }
+    if (body.photosAfter !== undefined) {
+      const fotos = Array.isArray(body.photosAfter) ? body.photosAfter : [];
+      data.fotosDespues = fotos.length > 0 ? JSON.stringify(fotos) : null;
+    }
+    
+    if (body.collaborators !== undefined) {
+      data.asignadoId = Array.isArray(body.collaborators) && body.collaborators.length > 0 ? body.collaborators[0] : null;
+    }
 
     // Auto-tracking de timestamps
     if (body.status !== undefined) {
@@ -57,16 +72,23 @@ export async function PUT(
       }
       if (estadoSistema === 'Completado' && !otActual.fechaFinReal && body.completedAt === undefined) {
         data.fechaFinReal = new Date().toISOString();
+        if (!otActual.fechaInicioReal && body.startedAt === undefined) {
+          data.fechaInicioReal = otActual.createdAt.toISOString();
+        }
       }
     }
-    if (body.startedAt !== undefined) data.fechaInicioReal = body.startedAt ? new Date(body.startedAt).toISOString() : null;
-    if (body.completedAt !== undefined) data.fechaFinReal = body.completedAt ? new Date(body.completedAt).toISOString() : null;
+    if (body.startedAt !== undefined) {
+      data.fechaInicioReal = body.startedAt ? new Date(body.startedAt).toISOString() : null;
+    }
+    if (body.completedAt !== undefined) {
+      data.fechaFinReal = body.completedAt ? new Date(body.completedAt).toISOString() : null;
+    }
 
     const ot = await withRetry(() => db.ordenTrabajo.update({ where: { id }, data }));
     return NextResponse.json(serializeOT(ot));
   } catch (error) {
     console.error('PUT /api/workorders/[id] error:', error);
-    return NextResponse.json({ error: 'Error al actualizar OT' }, { status: 500 });
+    return NextResponse.json({ error: 'Error al actualizar OT: ' + String(error) }, { status: 500 });
   }
 }
 
