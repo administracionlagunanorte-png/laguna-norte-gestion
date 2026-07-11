@@ -12,13 +12,13 @@ import { db, withRetry } from '@/lib/db'
  *     - scannedBy, profileId, latitude, longitude, notes
  *     - scannedAt: timestamp ms del momento real del escaneo (importante para preservar la hora)
  *
- * Retorna: { success, synced, failed, errors[] }
+ * Retorna: { success, synced, failed, errors[], results[] }
  */
 export async function POST(request: NextRequest) {
   try {
     const { scans } = await request.json()
     if (!Array.isArray(scans)) {
-      return NextResponse.json({ success: true, synced: 0, failed: 0, errors: [] })
+      return NextResponse.json({ success: true, synced: 0, failed: 0, errors: [], results: [] })
     }
 
     // Cache de códigos QR ya resueltos para evitar múltiples lookups
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     const results: { success: boolean; code?: string; offlineId?: string; error?: string }[] = []
 
     for (let i = 0; i < scans.length; i++) {
-      const s = scans[i]
+      const s = scans[i] || {}
       try {
         // Resolver qrLocationId
         let qrLocationId: string | undefined = s.qrLocationId
@@ -56,27 +56,29 @@ export async function POST(request: NextRequest) {
         }
 
         // Preservar la hora real del escaneo si viene scannedAt
-        const createdAt = s.scannedAt ? new Date(Number(s.scannedAt)) : new Date()
+        const scannedAt =
+          typeof s.scannedAt === 'number' && Number.isFinite(s.scannedAt)
+            ? new Date(s.scannedAt)
+            : typeof s.scannedAt === 'string' && s.scannedAt
+              ? new Date(s.scannedAt)
+              : new Date()
+        const createdAt = isNaN(scannedAt.getTime()) ? new Date() : scannedAt
+
+        const latitude = parseCoord(s.latitude)
+        const longitude = parseCoord(s.longitude)
+        const scannedBy = typeof s.scannedBy === 'string' ? s.scannedBy : ''
+        const profileId = typeof s.profileId === 'string' && s.profileId.trim() ? s.profileId : null
+        const notes = typeof s.notes === 'string' ? s.notes : ''
 
         await withRetry(() =>
           db.movilQrScan.create({
             data: {
               qrLocationId,
-              scannedBy: s.scannedBy || '',
-              profileId: s.profileId || null,
-              latitude:
-                typeof s.latitude === 'number'
-                  ? s.latitude
-                  : s.latitude
-                    ? Number(s.latitude)
-                    : null,
-              longitude:
-                typeof s.longitude === 'number'
-                  ? s.longitude
-                  : s.longitude
-                    ? Number(s.longitude)
-                    : null,
-              notes: s.notes || '',
+              scannedBy,
+              profileId,
+              latitude,
+              longitude,
+              notes,
               createdAt,
             },
           }),
@@ -99,4 +101,13 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     )
   }
+}
+
+function parseCoord(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string' && v.trim()) {
+    const n = Number(v)
+    if (Number.isFinite(n)) return n
+  }
+  return null
 }

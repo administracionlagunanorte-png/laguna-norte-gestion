@@ -6572,11 +6572,50 @@ function QrScannerView({
   const [myScans, setMyScans] = useState<QrScanItem[]>([]);
   const [scannerInstance, setScannerInstance] = useState<any>(null);
 
+  // ─── GPS Status ───
+  const [gpsStatus, setGpsStatus] = useState<'unknown' | 'granted' | 'denied' | 'unavailable' | 'pending'>('unknown');
+  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
+
   // ─── Offline State ───
   const [isOnline, setIsOnline] = useState(true);
   const [pendingScans, setPendingScans] = useState<OfflineScan[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ synced: number; failed: number } | null>(null);
+
+  // ─── Precargar GPS al montar la vista ───
+  // Esto hace dos cosas:
+  //   1. Verifica el permiso de geolocalización temprano (mejor UX)
+  //   2. Cachea las coordenadas para que el escaneo sea instantáneo
+  useEffect(() => {
+    if (!('geolocation' in navigator)) {
+      setGpsStatus('unavailable');
+      return;
+    }
+    setGpsStatus('pending');
+    // Algunos navegadores (Safari iOS) requieren que se llame getCurrentPosition
+    // para que aparezca el prompt de permiso. Lo llamamos una vez al montar.
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGpsStatus('granted');
+        setGpsCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        // Refrescar coordenadas cada 30s para mantener precisión
+        const interval = setInterval(() => {
+          navigator.geolocation.getCurrentPosition(
+            (p) => setGpsCoords({ lat: p.coords.latitude, lng: p.coords.longitude }),
+            () => { /* ignore refresh errors */ },
+            { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 },
+          );
+        }, 30000);
+        // Limpiar interval al desmontar
+        return () => clearInterval(interval);
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) setGpsStatus('denied');
+        else setGpsStatus('unavailable');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+    );
+  }, []);
 
   // ─── Online/Offline Detection ───
   useEffect(() => {
@@ -6697,16 +6736,34 @@ function QrScannerView({
   const handleScan = useCallback(async (code: string) => {
     setError('');
     setSuccess('');
+    // Capturar el timestamp REAL del escaneo ANTES de cualquier otra cosa.
+    // Esto garantiza que la hora quede registrada con precisión incluso si
+    // la petición HTTP tarda varios segundos o falla y se guarda offline.
+    const scannedAt = Date.now();
+
     try {
-      // Try to get GPS position
-      let lat: number | undefined, lng: number | undefined;
-      try {
-        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000, enableHighAccuracy: true });
-        });
-        lat = pos.coords.latitude;
-        lng = pos.coords.longitude;
-      } catch { /* GPS not available, that's ok */ }
+      // Usar coordenadas cacheadas si están disponibles; si no, intentar
+      // obtener una lectura fresca con timeout corto.
+      let lat: number | null = gpsCoords?.lat ?? null;
+      let lng: number | null = gpsCoords?.lng ?? null;
+      if ((lat == null || lng == null) && 'geolocation' in navigator) {
+        try {
+          const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              timeout: 5000,
+              enableHighAccuracy: true,
+              maximumAge: 5000,
+            });
+          });
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+          setGpsCoords({ lat, lng });
+          setGpsStatus('granted');
+        } catch (geoErr: any) {
+          if (geoErr?.code === geoErr?.PERMISSION_DENIED) setGpsStatus('denied');
+          // GPS no disponible, continuamos sin coordenadas
+        }
+      }
 
       const scanPayload = {
         code,
@@ -6715,6 +6772,7 @@ function QrScannerView({
         latitude: lat,
         longitude: lng,
         notes: notes.trim() || undefined,
+        scannedAt, // Importante: preserva la hora real del escaneo
       };
 
       if (navigator.onLine) {
@@ -6725,7 +6783,7 @@ function QrScannerView({
           body: JSON.stringify(scanPayload),
         });
         if (!result.ok) {
-          const errData = await result.json();
+          const errData = await result.json().catch(() => ({}));
           throw new Error(errData.error || 'Error al registrar escaneo');
         }
         const scanData = await result.json();
@@ -6744,14 +6802,14 @@ function QrScannerView({
       } else {
         // ─── OFFLINE: Save locally ───
         const offlineScan: OfflineScan = {
-          id: `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          id: `offline_${scannedAt}_${Math.random().toString(36).slice(2, 8)}`,
           code,
           scannedBy: profileName,
           profileId,
-          latitude: lat ?? null,
-          longitude: lng ?? null,
+          latitude: lat,
+          longitude: lng,
           notes: notes.trim(),
-          scannedAt: Date.now(),
+          scannedAt,
           synced: false,
         };
         addOfflineScan(offlineScan);
@@ -6761,36 +6819,27 @@ function QrScannerView({
           qrLocationId: '',
           scannedBy: profileName,
           profileId,
-          latitude: lat ?? null,
-          longitude: lng ?? null,
+          latitude: lat,
+          longitude: lng,
           notes: notes.trim(),
-          createdAt: Date.now(),
+          createdAt: scannedAt,
           location: null,
         });
         setSuccess(`Guardado localmente (sin internet): ${code}`);
         setNotes('');
       }
     } catch (err: any) {
-      // If fetch fails (network error), try saving offline
+      // If fetch fails (network error), try saving offline with la hora real
       if (!navigator.onLine || err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
-        let lat: number | null = null, lng: number | null = null;
-        try {
-          const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000, enableHighAccuracy: true });
-          });
-          lat = pos.coords.latitude;
-          lng = pos.coords.longitude;
-        } catch { /* GPS not available */ }
-
         const offlineScan: OfflineScan = {
-          id: `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          id: `offline_${scannedAt}_${Math.random().toString(36).slice(2, 8)}`,
           code,
           scannedBy: profileName,
           profileId,
-          latitude: lat,
-          longitude: lng,
+          latitude: gpsCoords?.lat ?? null,
+          longitude: gpsCoords?.lng ?? null,
           notes: notes.trim(),
-          scannedAt: Date.now(),
+          scannedAt,
           synced: false,
         };
         addOfflineScan(offlineScan);
@@ -6800,10 +6849,10 @@ function QrScannerView({
           qrLocationId: '',
           scannedBy: profileName,
           profileId,
-          latitude: lat,
-          longitude: lng,
+          latitude: gpsCoords?.lat ?? null,
+          longitude: gpsCoords?.lng ?? null,
           notes: notes.trim(),
-          createdAt: Date.now(),
+          createdAt: scannedAt,
           location: null,
         });
         setSuccess(`Guardado localmente (sin internet): ${code}`);
@@ -6812,7 +6861,7 @@ function QrScannerView({
         setError(err.message || 'Error al registrar escaneo');
       }
     }
-  }, [profileName, profileId, notes]);
+  }, [profileName, profileId, notes, gpsCoords]);
 
   const startScanner = useCallback(async () => {
     setScanning(true);
@@ -6952,7 +7001,7 @@ function QrScannerView({
         )}
 
         {/* ─── Online Indicator (small, always visible) ─── */}
-        <div className="flex items-center justify-center gap-2">
+        <div className="flex items-center justify-center gap-2 flex-wrap">
           <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${isOnline ? 'bg-emerald-50' : 'bg-amber-50'}`}>
             <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
             <span className={`text-[9px] font-black uppercase ${isOnline ? 'text-emerald-600' : 'text-amber-600'}`}>
@@ -6963,6 +7012,32 @@ function QrScannerView({
                 · {pendingScans.length} pendiente{pendingScans.length !== 1 ? 's' : ''}
               </span>
             )}
+          </div>
+          {/* ─── Estado GPS ─── */}
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${
+            gpsStatus === 'granted' ? 'bg-emerald-50'
+            : gpsStatus === 'denied' ? 'bg-red-50'
+            : gpsStatus === 'pending' ? 'bg-blue-50'
+            : 'bg-slate-100'
+          }`} title={gpsCoords ? `GPS: ${gpsCoords.lat.toFixed(6)}, ${gpsCoords.lng.toFixed(6)}` : 'GPS no disponible'}>
+            <MapPinned size={11} className={
+              gpsStatus === 'granted' ? 'text-emerald-500'
+              : gpsStatus === 'denied' ? 'text-red-500'
+              : gpsStatus === 'pending' ? 'text-blue-500 animate-pulse'
+              : 'text-slate-400'
+            } />
+            <span className={`text-[9px] font-black uppercase ${
+              gpsStatus === 'granted' ? 'text-emerald-600'
+              : gpsStatus === 'denied' ? 'text-red-600'
+              : gpsStatus === 'pending' ? 'text-blue-600'
+              : 'text-slate-500'
+            }`}>
+              {gpsStatus === 'granted' ? 'GPS activo'
+                : gpsStatus === 'denied' ? 'GPS denegado'
+                : gpsStatus === 'pending' ? 'GPS…'
+                : gpsStatus === 'unavailable' ? 'GPS no disponible'
+                : 'GPS?'}
+            </span>
           </div>
         </div>
 

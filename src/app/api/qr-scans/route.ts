@@ -37,22 +37,22 @@ export async function GET(request: NextRequest) {
       if (to) where.createdAt.lte = new Date(Number(to))
     }
 
-    const [scans, total] = await withRetry(() =>
-      Promise.all([
-        db.movilQrScan.findMany({
-          where,
-          include: {
-            location: {
-              select: { id: true, name: true, location: true, code: true },
-            },
+    // Importante: ejecutar findMany y count en secuencia (no Promise.all)
+    // porque Aiven free tier con connection_limit=1 no soporta queries paralelas.
+    const scans = await withRetry(() =>
+      db.movilQrScan.findMany({
+        where,
+        include: {
+          location: {
+            select: { id: true, name: true, location: true, code: true },
           },
-          orderBy: { createdAt: 'desc' },
-          take: limit,
-          skip: offset,
-        }),
-        db.movilQrScan.count({ where }),
-      ]),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset,
+      }),
     )
+    const total = await withRetry(() => db.movilQrScan.count({ where }))
 
     return NextResponse.json({ scans, total })
   } catch (err) {
@@ -109,28 +109,31 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Timestamp: usar scannedAt si viene (offline), sino now()
-    const createdAt = body.scannedAt ? new Date(Number(body.scannedAt)) : new Date()
+    // Normalizar latitud/longitud a number | null (nunca undefined)
+    const latitude = parseCoord(body.latitude)
+    const longitude = parseCoord(body.longitude)
+    const scannedBy = typeof body.scannedBy === 'string' ? body.scannedBy : ''
+    const profileId = typeof body.profileId === 'string' && body.profileId.trim() ? body.profileId : null
+    const notes = typeof body.notes === 'string' ? body.notes : ''
+    const scannedAt =
+      typeof body.scannedAt === 'number' && Number.isFinite(body.scannedAt)
+        ? new Date(body.scannedAt)
+        : typeof body.scannedAt === 'string' && body.scannedAt
+          ? new Date(body.scannedAt)
+          : new Date()
+
+    // Crear el escaneo. Si scannedAt es inválido, usar new Date() como fallback.
+    const createdAt = isNaN(scannedAt.getTime()) ? new Date() : scannedAt
 
     const scan = await withRetry(() =>
       db.movilQrScan.create({
         data: {
           qrLocationId,
-          scannedBy: body.scannedBy || '',
-          profileId: body.profileId || null,
-          latitude:
-            typeof body.latitude === 'number'
-              ? body.latitude
-              : body.latitude
-                ? Number(body.latitude)
-                : null,
-          longitude:
-            typeof body.longitude === 'number'
-              ? body.longitude
-              : body.longitude
-                ? Number(body.longitude)
-                : null,
-          notes: body.notes || '',
+          scannedBy,
+          profileId,
+          latitude,
+          longitude,
+          notes,
           createdAt,
         },
         include: {
@@ -144,6 +147,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(scan)
   } catch (err) {
     console.error('POST /api/qr-scans error:', err)
-    return NextResponse.json({ error: 'Error al registrar escaneo' }, { status: 500 })
+    const msg = err instanceof Error ? err.message : 'Error al registrar escaneo'
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
+}
+
+function parseCoord(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string' && v.trim()) {
+    const n = Number(v)
+    if (Number.isFinite(n)) return n
+  }
+  return null
 }
