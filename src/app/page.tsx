@@ -28,7 +28,7 @@ const LagunaNorteApp = dynamic(() => import('./LagunaNorteApp'), {
 function CacheBuster() {
   useEffect(() => {
     try {
-      const BUILD_VERSION = '2026-07-11-v16-ocr-manual'; // Cambiar este valor en cada deploy crítico
+      const BUILD_VERSION = '2026-07-12-v17-ot-save-fix'; // Cambiar este valor en cada deploy crítico
       const stored = localStorage.getItem('app_build_version');
       if (stored !== BUILD_VERSION) {
         localStorage.setItem('app_build_version', BUILD_VERSION);

@@ -62,6 +62,7 @@ export async function GET() {
 
 // POST — crear nueva OT en OrdenTrabajo de Aiven
 export async function POST(request: NextRequest) {
+  let secuenciaNum: number | null = null;
   try {
     const body = await request.json();
 
@@ -77,6 +78,7 @@ export async function POST(request: NextRequest) {
         create: { tabla: 'OrdenTrabajo', prefijo: 'OT', ultimoNum: 1, padding: 4 },
       })
     );
+    secuenciaNum = secuencia.ultimoNum;
     const otNum = `OT-${String(secuencia.ultimoNum).padStart(4, '0')}`;
 
     // Auto-set timestamps
@@ -107,10 +109,27 @@ export async function POST(request: NextRequest) {
     );
 
     return NextResponse.json(serializeOT(nuevaOT), { status: 201 });
-  } catch (error) {
+  } catch (error: any) {
     console.error('POST /api/workorders error:', error);
+
+    // Rollback del contador si se incrementó pero el create falló
+    if (secuenciaNum !== null) {
+      try {
+        await withRetry(() =>
+          db.secuencia.update({
+            where: { tabla: 'OrdenTrabajo' },
+            data: { ultimoNum: secuenciaNum! - 1 },
+          })
+        );
+        console.log(`[workorders] Contador restaurado a ${secuenciaNum - 1}`);
+      } catch (rollbackErr) {
+        console.error('[workorders] Error en rollback de contador:', rollbackErr);
+      }
+    }
+
+    const errMsg = error?.message || 'Error al crear la orden de trabajo';
     return NextResponse.json(
-      { error: 'Error al crear la orden de trabajo' },
+      { error: errMsg },
       { status: 500 }
     );
   }

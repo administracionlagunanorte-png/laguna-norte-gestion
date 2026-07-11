@@ -2743,6 +2743,8 @@ function ModalInner({
   zones,
   userRole,
   permissions,
+  saving,
+  saveError,
 }: {
   editingItem: Partial<WorkOrder> | null;
   onClose: () => void;
@@ -2754,6 +2756,8 @@ function ModalInner({
   zones: Zone[];
   userRole: UserRole;
   permissions?: string[];
+  saving?: boolean;
+  saveError?: string;
 }) {
   const schedule = loadWorkSchedule();
   const [form, setForm] = useState(() => {
@@ -3142,6 +3146,8 @@ function Modal({
   zones,
   userRole,
   permissions,
+  saving,
+  saveError,
 }: {
   isOpen: boolean;
   editingItem: Partial<WorkOrder> | null;
@@ -3154,6 +3160,8 @@ function Modal({
   zones: Zone[];
   userRole: UserRole;
   permissions?: string[];
+  saving?: boolean;
+  saveError?: string;
 }) {
   if (!isOpen) return null;
   const modalKey = editingItem?.id ?? 'new';
@@ -3170,6 +3178,8 @@ function Modal({
       zones={zones}
       userRole={userRole}
       permissions={permissions}
+      saving={saving}
+      saveError={saveError}
     />
   );
 }
@@ -5195,17 +5205,31 @@ function RecurringPanel({
                 ) : (
                   <button
                     onClick={handleSave}
-                    className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-black text-sm uppercase active:scale-95 transition-transform shadow-lg shadow-emerald-200 flex items-center justify-center gap-2"
+                    disabled={saving}
+                    className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-black text-sm uppercase active:scale-95 transition-transform shadow-lg shadow-emerald-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <CheckCircle2 size={18} /> {editingItem ? 'Guardar' : 'Crear'}
+                    {saving ? (
+                      <><RefreshCcw size={18} className="animate-spin" /> Guardando...</>
+                    ) : (
+                      <><CheckCircle2 size={18} /> {editingItem ? 'Guardar' : 'Crear'}</>
+                    )}
                   </button>
                 )}
               </div>
 
+              {/* Error message */}
+              {saveError && (
+                <div className="bg-red-50 border border-red-200 p-3 rounded-2xl flex items-center gap-2">
+                  <AlertCircle size={16} className="text-red-500 flex-shrink-0" />
+                  <p className="text-xs font-bold text-red-600">{saveError}</p>
+                </div>
+              )}
+
               {/* Cancel link */}
               <button
                 onClick={resetForm}
-                className="w-full py-2 text-slate-400 font-bold text-xs uppercase text-center hover:text-red-500 transition-colors"
+                disabled={saving}
+                className="w-full py-2 text-slate-400 font-bold text-xs uppercase text-center hover:text-red-500 transition-colors disabled:opacity-50"
               >
                 Cancelar
               </button>
@@ -9651,31 +9675,47 @@ export default function LagunaNorteApp() {
   const canDelete = !isProfileUser || profilePerms.includes('delete');
   const canView = !isProfileUser || profilePerms.includes('view');
 
+  const [otSaving, setOtSaving] = useState(false);
+  const [otSaveError, setOtSaveError] = useState<string>('');
+
   const handleSaveOT = useCallback(async (data: Partial<WorkOrder>) => {
-    if (data.id) {
-      // Auto-track timestamps when status changes
-      const existing = workOrders.find(o => o.id === data.id);
-      const now = Date.now();
-      const updateData = { ...data };
-      if (existing) {
-        if (data.status === 'En Proceso' && !existing.startedAt) {
-          updateData.startedAt = now;
-        }
-        if (data.status === 'Terminada' && !existing.completedAt) {
-          updateData.completedAt = now;
-          // Also ensure startedAt is set if it wasn't
-          if (!existing.startedAt) {
-            updateData.startedAt = existing.createdAt;
+    setOtSaving(true);
+    setOtSaveError('');
+    try {
+      if (data.id) {
+        const existing = workOrders.find(o => o.id === data.id);
+        const now = Date.now();
+        const updateData = { ...data };
+        if (existing) {
+          if (data.status === 'En Proceso' && !existing.startedAt) {
+            updateData.startedAt = now;
+          }
+          if (data.status === 'Terminada' && !existing.completedAt) {
+            updateData.completedAt = now;
+            if (!existing.startedAt) {
+              updateData.startedAt = existing.createdAt;
+            }
           }
         }
+        const result = await updateWorkOrder(updateData);
+        if (!result) {
+          throw new Error('No se pudo guardar la OT. Revisa tu conexión e intenta de nuevo.');
+        }
+      } else {
+        const result = await createWorkOrder(data);
+        if (!result) {
+          throw new Error('No se pudo crear la OT. Revisa tu conexión e intenta de nuevo.');
+        }
       }
-      await updateWorkOrder(updateData);
-    } else {
-      await createWorkOrder(data);
+      setIsModalOpen(false);
+      setEditingItem(null);
+    } catch (err: any) {
+      console.error('[handleSaveOT] Error:', err);
+      setOtSaveError(err?.message || 'Error al guardar la OT. Intenta de nuevo.');
+    } finally {
+      setOtSaving(false);
     }
-    setIsModalOpen(false);
-    setEditingItem(null);
-  }, [createWorkOrder, updateWorkOrder]);
+  }, [createWorkOrder, updateWorkOrder, workOrders]);
 
   const handleDeleteOT = useCallback(async (id: string) => {
     await deleteWorkOrder(id);
@@ -10161,6 +10201,8 @@ export default function LagunaNorteApp() {
         zones={zones}
         userRole={userRole}
         permissions={profilePerms}
+        saving={otSaving}
+        saveError={otSaveError}
       />
 
       {/* ─── Dashboard Full-Page View ─── */}
