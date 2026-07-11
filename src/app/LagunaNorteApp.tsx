@@ -259,6 +259,7 @@ const ZONES_KEY = 'laguna_norte_zones';
 const CONFIG_VERSION_KEY = 'laguna_norte_config_version';
 const CONFIG_VERSION = 2; // Increment when default data changes to force reload
 const USER_ROLE_KEY = 'laguna_norte_user_role';
+const PROFILE_CACHE_KEY = 'laguna_norte_profile_cache';
 const ADMIN_PWD_KEY = 'laguna_norte_admin_pwd';
 const DEFAULT_ADMIN_PWD = 'admin2024';
 const WORK_SCHEDULE_KEY = 'laguna_norte_work_schedule';
@@ -6948,6 +6949,19 @@ function QrScannerView({
     };
   }, [scannerInstance]);
 
+  // ─── Auto-start scanner en modo guardia ───
+  // Cuando el guardia entra, la cámara debe abrirse automáticamente para
+  // que pueda escanear inmediatamente sin tener que tocar ningún botón.
+  useEffect(() => {
+    if (isGuardiaMode && !scanning && !scannerInstance && !error) {
+      // Pequeño delay para asegurar que el componente esté montado
+      const timer = setTimeout(() => {
+        startScanner();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [isGuardiaMode, scanning, scannerInstance, error, startScanner]);
+
   return (
     <div className="flex-1 flex flex-col">
       {/* Header */}
@@ -7116,12 +7130,6 @@ function QrScannerView({
           )}
         </div>
 
-        {/* Notes */}
-        <div>
-          <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Notas (opcional)</label>
-          <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ej: Todo normal, sin novedades" className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm" />
-        </div>
-
         {/* Scan Button */}
         <button
           onClick={scanning ? stopScanner : startScanner}
@@ -7142,26 +7150,36 @@ function QrScannerView({
           )}
         </button>
 
-        {/* Manual Code Entry */}
-        <div className="bg-slate-50 rounded-2xl p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase mb-2">O ingresa el código manualmente</p>
-          <div className="flex gap-2">
-            <input
-              value={manualCode}
-              onChange={e => setManualCode(e.target.value.toUpperCase())}
-              placeholder="Ej: QR-PORTERIA-01"
-              className="flex-1 p-3 rounded-xl bg-white border-none font-bold text-xs uppercase"
-              onKeyDown={e => e.key === 'Enter' && handleManualScan()}
-            />
-            <button
-              onClick={handleManualScan}
-              disabled={!manualCode.trim()}
-              className={`px-4 py-3 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform disabled:opacity-50 ${isOnline ? 'bg-blue-600' : 'bg-amber-500'}`}
-            >
-              Registrar
-            </button>
+        {/* Notes — solo para admin/supervisor, no para guardia */}
+        {!isGuardiaMode && (
+          <div>
+            <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Notas (opcional)</label>
+            <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ej: Todo normal, sin novedades" className="w-full p-4 mt-1 rounded-2xl bg-slate-50 border-none font-bold text-sm" />
           </div>
-        </div>
+        )}
+
+        {/* Manual Code Entry — solo para admin/supervisor */}
+        {!isGuardiaMode && (
+          <div className="bg-slate-50 rounded-2xl p-4">
+            <p className="text-[10px] font-black text-slate-400 uppercase mb-2">O ingresa el código manualmente</p>
+            <div className="flex gap-2">
+              <input
+                value={manualCode}
+                onChange={e => setManualCode(e.target.value.toUpperCase())}
+                placeholder="Ej: QR-PORTERIA-01"
+                className="flex-1 p-3 rounded-xl bg-white border-none font-bold text-xs uppercase"
+                onKeyDown={e => e.key === 'Enter' && handleManualScan()}
+              />
+              <button
+                onClick={handleManualScan}
+                disabled={!manualCode.trim()}
+                className={`px-4 py-3 text-white rounded-xl text-xs font-black uppercase active:scale-95 transition-transform disabled:opacity-50 ${isOnline ? 'bg-blue-600' : 'bg-amber-500'}`}
+              >
+                Registrar
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ─── Pending Scans Detail List ─── */}
         {pendingScans.length > 0 && (
@@ -7186,8 +7204,8 @@ function QrScannerView({
           </div>
         )}
 
-        {/* My Recent Scans */}
-        {myScans.length > 0 && (
+        {/* My Recent Scans — solo para admin/supervisor, no para guardia */}
+        {!isGuardiaMode && myScans.length > 0 && (
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase mb-2 ml-1">Mis últimos escaneos</p>
             <div className="space-y-2">
@@ -8298,6 +8316,11 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
       if (data.profile.needsPassword) {
         setCodeProfileNeedsPwd(data.profile as ProfileItem);
       } else {
+        // Guardar perfil completo en cache para que la app pueda renderizar
+        // el QrScannerView inmediatamente sin esperar a que cargue /api/profiles
+        try {
+          localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(data.profile));
+        } catch { /* ignore */ }
         localStorage.setItem(USER_ROLE_KEY, `profile:${data.profile.id}`);
         onLogin(`profile:${data.profile.id}`);
       }
@@ -8323,6 +8346,10 @@ function ProfileLogin({ onLogin, workAreas }: { onLogin: (role: UserRole) => voi
         setCodeError(data.error || 'Contraseña incorrecta');
         return;
       }
+      // Guardar perfil completo en cache
+      try {
+        localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(data.profile));
+      } catch { /* ignore */ }
       localStorage.setItem(USER_ROLE_KEY, `profile:${data.profile.id}`);
       onLogin(`profile:${data.profile.id}`);
     } catch {
@@ -8619,8 +8646,21 @@ export default function LagunaNorteApp() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { items: recurringItems } = useRecurringWorkOrders(getPerformedBy(), getProfileId());
 
+  // currentProfile: priorizar el perfil de la API (datos frescos),
+  // pero si la API aún no ha cargado, usar el cache de localStorage
+  // para que el guardia pueda ver el QrScannerView inmediatamente.
   const currentProfile = userRole?.startsWith('profile:')
-    ? profiles.find(p => p.id === userRole.replace('profile:', ''))
+    ? (profiles.find(p => p.id === userRole.replace('profile:', ''))
+       || (() => {
+         try {
+           const cached = localStorage.getItem(PROFILE_CACHE_KEY);
+           if (cached) {
+             const parsed = JSON.parse(cached);
+             if (parsed.id === userRole.replace('profile:', '')) return parsed;
+           }
+         } catch { /* ignore */ }
+         return undefined;
+       })())
     : null;
   const isProfileUser = !!currentProfile;
 
@@ -8753,6 +8793,7 @@ export default function LagunaNorteApp() {
         <QrScannerView
           onBack={() => {
             localStorage.removeItem(USER_ROLE_KEY);
+            localStorage.removeItem(PROFILE_CACHE_KEY);
             setUserRole(null);
           }}
           profileName={currentProfile.name}
@@ -9223,6 +9264,7 @@ export default function LagunaNorteApp() {
         currentProfile={currentProfile}
         onLogout={() => {
           localStorage.removeItem(USER_ROLE_KEY);
+          localStorage.removeItem(PROFILE_CACHE_KEY);
           setUserRole(null);
         }}
       />
