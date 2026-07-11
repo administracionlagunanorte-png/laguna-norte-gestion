@@ -6741,6 +6741,40 @@ function QrScannerView({
     // la petición HTTP tarda varios segundos o falla y se guarda offline.
     const scannedAt = Date.now();
 
+    // Helper local: guarda el escaneo en localStorage como fallback SIEMPRE
+    // que el POST falle (sea por red, por 500 del servidor, o cualquier otro
+    // motivo). Esto evita perder escaneos cuando hay bugs transitorios en
+    // el servidor o cuando el celular pierde conexión a mitad de la petición.
+    const saveOfflineFallback = (reason: string) => {
+      const offlineScan: OfflineScan = {
+        id: `offline_${scannedAt}_${Math.random().toString(36).slice(2, 8)}`,
+        code,
+        scannedBy: profileName,
+        profileId,
+        latitude: gpsCoords?.lat ?? null,
+        longitude: gpsCoords?.lng ?? null,
+        notes: notes.trim(),
+        scannedAt,
+        synced: false,
+      };
+      addOfflineScan(offlineScan);
+      setPendingScans(prev => [...prev, offlineScan]);
+      setLastScan({
+        id: offlineScan.id,
+        qrLocationId: '',
+        scannedBy: profileName,
+        profileId,
+        latitude: gpsCoords?.lat ?? null,
+        longitude: gpsCoords?.lng ?? null,
+        notes: notes.trim(),
+        createdAt: scannedAt,
+        location: null,
+      });
+      setSuccess(`Guardado localmente (se enviará al recuperar conexión): ${code}`);
+      setNotes('');
+      console.warn('[QR] Escaneo guardado offline:', reason);
+    };
+
     try {
       // Usar coordenadas cacheadas si están disponibles; si no, intentar
       // obtener una lectura fresca con timeout corto.
@@ -6775,17 +6809,33 @@ function QrScannerView({
         scannedAt, // Importante: preserva la hora real del escaneo
       };
 
+      // ─── ONLINE: intentar enviar al servidor ───
       if (navigator.onLine) {
-        // ─── ONLINE: Send directly to server ───
-        const result = await fetch('/api/qr-scans', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(scanPayload),
-        });
-        if (!result.ok) {
-          const errData = await result.json().catch(() => ({}));
-          throw new Error(errData.error || 'Error al registrar escaneo');
+        let result: Response;
+        try {
+          result = await fetch('/api/qr-scans', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(scanPayload),
+          });
+        } catch (fetchErr: any) {
+          // Error de red (no llegó al servidor): guardar offline
+          saveOfflineFallback(`Error de red: ${fetchErr?.message || 'fetch failed'}`);
+          return;
         }
+
+        if (!result.ok) {
+          // El servidor respondió con error (4xx/5xx). En lugar de perder el
+          // escaneo, lo guardamos offline para reintentar más tarde.
+          const errData = await result.json().catch(() => ({}));
+          const errMsg = errData.error || `Error HTTP ${result.status}`;
+          // Guardar offline como fallback para no perder el escaneo
+          saveOfflineFallback(`Servidor respondió: ${errMsg}`);
+          // Mostrar advertencia visible al usuario
+          setError(`El servidor rechazó el escaneo (${errMsg}). Se guardó localmente y se reintentará.`);
+          return;
+        }
+
         const scanData = await result.json();
         setLastScan(scanData);
         setSuccess(`Ubicación registrada: ${scanData?.location?.name ?? code}`);
@@ -6800,66 +6850,13 @@ function QrScannerView({
           }
         } catch { /* ignore */ }
       } else {
-        // ─── OFFLINE: Save locally ───
-        const offlineScan: OfflineScan = {
-          id: `offline_${scannedAt}_${Math.random().toString(36).slice(2, 8)}`,
-          code,
-          scannedBy: profileName,
-          profileId,
-          latitude: lat,
-          longitude: lng,
-          notes: notes.trim(),
-          scannedAt,
-          synced: false,
-        };
-        addOfflineScan(offlineScan);
-        setPendingScans(prev => [...prev, offlineScan]);
-        setLastScan({
-          id: offlineScan.id,
-          qrLocationId: '',
-          scannedBy: profileName,
-          profileId,
-          latitude: lat,
-          longitude: lng,
-          notes: notes.trim(),
-          createdAt: scannedAt,
-          location: null,
-        });
-        setSuccess(`Guardado localmente (sin internet): ${code}`);
-        setNotes('');
+        // ─── OFFLINE: guardar localmente ───
+        saveOfflineFallback('Sin conexión a internet');
       }
     } catch (err: any) {
-      // If fetch fails (network error), try saving offline with la hora real
-      if (!navigator.onLine || err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
-        const offlineScan: OfflineScan = {
-          id: `offline_${scannedAt}_${Math.random().toString(36).slice(2, 8)}`,
-          code,
-          scannedBy: profileName,
-          profileId,
-          latitude: gpsCoords?.lat ?? null,
-          longitude: gpsCoords?.lng ?? null,
-          notes: notes.trim(),
-          scannedAt,
-          synced: false,
-        };
-        addOfflineScan(offlineScan);
-        setPendingScans(prev => [...prev, offlineScan]);
-        setLastScan({
-          id: offlineScan.id,
-          qrLocationId: '',
-          scannedBy: profileName,
-          profileId,
-          latitude: gpsCoords?.lat ?? null,
-          longitude: gpsCoords?.lng ?? null,
-          notes: notes.trim(),
-          createdAt: scannedAt,
-          location: null,
-        });
-        setSuccess(`Guardado localmente (sin internet): ${code}`);
-        setNotes('');
-      } else {
-        setError(err.message || 'Error al registrar escaneo');
-      }
+      // Cualquier otro error no contemplado: guardar offline como última defensa
+      saveOfflineFallback(`Error inesperado: ${err?.message || 'desconocido'}`);
+      setError(`Error al registrar escaneo. Se guardó localmente: ${err?.message || ''}`);
     }
   }, [profileName, profileId, notes, gpsCoords]);
 
