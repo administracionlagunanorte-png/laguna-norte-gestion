@@ -8,7 +8,7 @@ import {
   RefreshCw, Settings, Pencil, Droplets, Flame, Shield, ShieldCheck, LogOut, Eye,
   BarChart3, Timer, TrendingUp, CalendarDays, Activity, FileSpreadsheet, FileText, Filter,
   Repeat, Pause, Play, ChevronLeft, Menu, Users, HardHat, Star, KeyRound, ScrollText,
-  QrCode, Scan, MapPinned, Wifi, WifiOff, Upload, CloudOff, CloudCheck, RefreshCcw, Printer, FileDown, Package, Wrench as WrenchIcon, Cog, AlertTriangle
+  QrCode, Scan, MapPinned, Wifi, WifiOff, Upload, CloudOff, CloudCheck, RefreshCcw, Printer, FileDown, Package, Wrench as WrenchIcon, Cog, AlertTriangle, Car
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import jsPDF from 'jspdf';
@@ -6896,9 +6896,123 @@ function QrScannerView({
     setError('');
     setSuccess('');
     // Capturar el timestamp REAL del escaneo ANTES de cualquier otra cosa.
-    // Esto garantiza que la hora quede registrada con precisión incluso si
-    // la petición HTTP tarda varios segundos o falla y se guarda offline.
     const scannedAt = Date.now();
+    const trimmedCode = code.trim();
+
+    // ─── Detectar si es un QR de ubicación o una patente vehicular ───
+    // Los QR de ubicación empiezan con "QR-" (ej: QR-FLAMENCOS-ENTRADA-A)
+    // Las patentes no empiezan con "QR-" (ej: ABCD12, AB1234)
+    const isQrCode = trimmedCode.toUpperCase().startsWith('QR-');
+
+    // ─── Si es un QR de ENTRADA A → entrar en modo patentes ───
+    if (isQrCode && trimmedCode.toUpperCase().includes('ENTRADA-')) {
+      // Extraer el nombre de la ubicación del código QR
+      // Ej: QR-FLAMENCOS-ENTRADA-A → FLAMENCOS
+      const match = trimmedCode.toUpperCase().match(/^QR-([A-ZÁÉÍÓÚÑ\s]+)-ENTRADA-/);
+      const ubicacion = match ? match[1] : trimmedCode.replace(/^QR-/, '').replace(/-ENTRADA-.*$/, '');
+
+      // Primero registrar el escaneo QR normal (para el historial de rondas)
+      // Luego entrar en modo patentes
+      // Continuamos con el flujo normal abajo, pero marcamos el modo patentes
+      setCurrentEntryLocation({
+        ubicacion,
+        qrCode: trimmedCode.toUpperCase(),
+        enteredAt: scannedAt,
+      });
+      setSuccess(`Modo patentes activado para ${ubicacion}. Escanea las patentes de los vehículos que entran.`);
+      // Continuar para registrar el escaneo QR también
+    }
+
+    // ─── Si es un QR de SALIDA A → cerrar todas las patentes abiertas de esa ubicación ───
+    if (isQrCode && trimmedCode.toUpperCase().includes('SALIDA-')) {
+      const match = trimmedCode.toUpperCase().match(/^QR-([A-ZÁÉÍÓÚÑ\s]+)-SALIDA-/);
+      const ubicacion = match ? match[1] : trimmedCode.replace(/^QR-/, '').replace(/-SALIDA-.*$/, '');
+
+      // Llamar a la API de salida masiva
+      try {
+        const res = await fetch('/api/patentes/salida-masiva', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ubicacion,
+            salidaQrCode: trimmedCode.toUpperCase(),
+            salidaScanId: null, // se podría vincular al scan QR si fuera necesario
+            scannedBy: profileName,
+            salidaAt: scannedAt,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPatenteFlash(`SALIDA: ${data.cerradas} patente(s) cerrada(s) en ${ubicacion}`);
+          setTimeout(() => setPatenteFlash(null), 3000);
+          // Limpiar modo patentes si era esa ubicación
+          if (currentEntryLocation?.ubicacion === ubicacion) {
+            setCurrentEntryLocation(null);
+          }
+          // Refrescar lista
+          refreshPatentesAbiertas();
+        }
+      } catch (err) {
+        console.error('Error al cerrar patentes:', err);
+      }
+      // Continuar para registrar el escaneo QR también
+    }
+
+    // ─── Si es una PATENTE (no empieza con QR-) y hay una ubicación de entrada activa ───
+    if (!isQrCode && currentEntryLocation) {
+      const patente = trimmedCode.toUpperCase().replace(/\s/g, '');
+      // Validación básica de patente chilena: 4-6 letras/números
+      if (patente.length < 4 || patente.length > 7) {
+        setError(`Patente inválida: "${patente}". Debe tener entre 4 y 7 caracteres.`);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/patentes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patente,
+            ubicacion: currentEntryLocation.ubicacion,
+            entradaQrCode: currentEntryLocation.qrCode,
+            entradaScanId: currentEntryLocation.scanId || null,
+            scannedBy: profileName,
+            profileId,
+            latitude: gpsCoords?.lat ?? null,
+            longitude: gpsCoords?.lng ?? null,
+            entradaAt: scannedAt,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPatenteFlash(`PATENTE ${patente} registrada en ${currentEntryLocation.ubicacion}`);
+          setTimeout(() => setPatenteFlash(null), 2000);
+          // Agregar a la lista local
+          setPatentesAbiertas(prev => [{
+            id: data.id || `temp_${scannedAt}`,
+            patente,
+            ubicacion: currentEntryLocation.ubicacion,
+            entradaAt: scannedAt,
+          }, ...prev]);
+          refreshPatentesAbiertas();
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          setError(`Error al registrar patente: ${errData.error || res.status}`);
+        }
+      } catch (err) {
+        setError(`Error de red al registrar patente: ${err instanceof Error ? err.message : 'desconocido'}`);
+      }
+      return; // No continuar con el flujo de escaneo QR normal
+    }
+
+    // ─── Si es una patente pero NO hay ubicación de entrada activa ───
+    if (!isQrCode && !currentEntryLocation) {
+      setError(`Escaneaste la patente "${trimmedCode.toUpperCase()}" pero no has escaneado un QR de ENTRADA A primero. Escanea el QR de entrada del condominio antes de registrar patentes.`);
+      return;
+    }
+
+    // ─── Flujo normal: registrar escaneo de QR ───
+    // (esto se ejecuta para QR de ENTRADA A, SALIDA A, y otros QR normales)
 
     // Helper local: guarda el escaneo en localStorage como fallback SIEMPRE
     // que el POST falle (sea por red, por 500 del servidor, o cualquier otro
@@ -7031,12 +7145,56 @@ function QrScannerView({
       saveOfflineFallback(`Error inesperado: ${err?.message || 'desconocido'}`);
       setError(`Error al registrar escaneo. Se guardó localmente: ${err?.message || ''}`);
     }
-  }, [profileName, profileId, notes, gpsCoords]);
+  }, [profileName, profileId, notes, gpsCoords, currentEntryLocation, refreshPatentesAbiertas]);
 
   // ─── Estado del láser Sunmi ───
   // Muestra feedback visual cuando el láser está capturando un código
   const [laserActive, setLaserActive] = useState(false);
   const laserTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ─── Estado del modo patentes vehiculares ───
+  // Cuando el guardia escanea un QR de "ENTRADA A" (ej: QR-FLAMENCOS-ENTRADA-A),
+  // entra en modo registro para esa ubicación. Los siguientes escaneos que
+  // NO sean QR (o sea, patentes) se registran como entrando a esa ubicación.
+  // Al escanear el QR de "SALIDA A", se cierran todas las patentes abiertas.
+  const [currentEntryLocation, setCurrentEntryLocation] = useState<{
+    ubicacion: string;
+    qrCode: string;
+    scanId?: string;
+    enteredAt: number;
+  } | null>(null);
+  const [patentesAbiertas, setPatentesAbiertas] = useState<Array<{
+    id: string;
+    patente: string;
+    ubicacion: string;
+    entradaAt: number;
+  }>>([]);
+  const [patenteFlash, setPatenteFlash] = useState<string | null>(null);
+
+  // ─── Helper: cargar patentes abiertas desde el servidor ───
+  const refreshPatentesAbiertas = useCallback(async () => {
+    try {
+      const res = await fetch('/api/patentes?soloAbiertas=true&limit=500', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.patentes)) {
+          setPatentesAbiertas(data.patentes.map((p: any) => ({
+            id: p.id,
+            patente: p.patente,
+            ubicacion: p.ubicacion,
+            entradaAt: new Date(p.entradaAt).getTime(),
+          })));
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // Cargar patentes abiertas al montar y cada 30s
+  useEffect(() => {
+    refreshPatentesAbiertas();
+    const interval = setInterval(refreshPatentesAbiertas, 30000);
+    return () => clearInterval(interval);
+  }, [refreshPatentesAbiertas]);
 
   // ─── Hook para capturar láser Sunmi (keyboard wedge) ───
   // En modo guardia, SIEMPRE activo. En modo admin, solo si no está
@@ -7287,6 +7445,63 @@ function QrScannerView({
               >
                 {gpsStatus === 'pending' ? 'Solicitando…' : 'Reintentar GPS'}
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Banner de modo patentes activo ─── */}
+        {currentEntryLocation && (
+          <div className="bg-blue-600 text-white p-4 rounded-2xl flex items-center justify-between gap-3">
+            <div className="flex-1">
+              <p className="text-xs font-black uppercase flex items-center gap-2">
+                <Car size={14} /> Modo registro de patentes activo
+              </p>
+              <p className="text-sm font-black mt-1">{currentEntryLocation.ubicacion}</p>
+              <p className="text-[10px] text-blue-100 mt-0.5">
+                Escanea las patentes de los vehículos que entran. Cuando termines, escanea el QR de SALIDA A.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setCurrentEntryLocation(null);
+                setSuccess('Modo patentes desactivado');
+              }}
+              className="px-3 py-2 bg-blue-700 hover:bg-blue-800 rounded-xl text-[10px] font-black uppercase active:scale-95"
+            >
+              Cancelar
+            </button>
+          </div>
+        )}
+
+        {/* ─── Flash de patente registrada ─── */}
+        {patenteFlash && (
+          <div className="bg-teal-500 text-white p-4 rounded-2xl flex items-center gap-3 animate-pulse">
+            <Car size={20} className="flex-shrink-0" />
+            <p className="text-sm font-black uppercase">{patenteFlash}</p>
+          </div>
+        )}
+
+        {/* ─── Patentes abiertas (adentro) ─── */}
+        {patentesAbiertas.length > 0 && (
+          <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase mb-2 ml-1 flex items-center gap-1">
+              <Car size={10} /> Vehículos adentro ({patentesAbiertas.length})
+            </p>
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {patentesAbiertas.slice(0, 20).map((p) => (
+                <div key={p.id} className="bg-white rounded-2xl border border-slate-100 p-3 flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Car size={16} className="text-blue-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-black text-slate-800 font-mono">{p.patente}</p>
+                    <p className="text-[9px] text-slate-500 font-bold">{p.ubicacion}</p>
+                  </div>
+                  <p className="text-[9px] text-slate-400 font-bold">
+                    {formatDateTime(p.entradaAt)}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
         )}

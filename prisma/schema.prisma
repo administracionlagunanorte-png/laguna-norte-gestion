@@ -160,6 +160,38 @@ model MovilQrScan {
   @@index([createdAt])
 }
 
+// ============================================
+// PATENTES VEHICULARES
+// ============================================
+// Cuando un guardia escanea un QR de "ENTRADA A" (ej: QR-FLAMENCOS-ENTRADA-A),
+// entra en modo registro para esa ubicación. Luego escanea patentes y se
+// registran como "adentro" en esa ubicación. Al escanear el QR de "SALIDA A"
+// (ej: QR-FLAMENCOS-SALIDA-A), todas las patentes abiertas de esa ubicación
+// se marcan como salidas.
+model MovilPatente {
+  id            String    @id @default(cuid())
+  patente       String    // ABCD12 (siempre uppercase)
+  ubicacion     String    // FLAMENCOS, BANDURRIAS, etc.
+  entradaQrCode String    // QR-FLAMENCOS-ENTRADA-A (el QR que triggered la entrada)
+  entradaScanId String?   // link al MovilQrScan que triggered la entrada
+  entradaAt     DateTime  @default(now()) // cuándo se escaneó la patente
+  salidaQrCode  String?   // QR-FLAMENCOS-SALIDA-A
+  salidaScanId  String?   // link al MovilQrScan que triggered la salida
+  salidaAt      DateTime? // null = todavía adentro
+  scannedBy     String    @default("")
+  profileId     String?
+  latitude      Float?
+  longitude     Float?
+  notes         String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([ubicacion, salidaAt]) // query: patentes abiertas por ubicación
+  @@index([patente])
+  @@index([entradaAt])
+  @@index([scannedBy])
+}
+
 model MovilAuditLog {
   id          String   @id @default(cuid())
   action      String
