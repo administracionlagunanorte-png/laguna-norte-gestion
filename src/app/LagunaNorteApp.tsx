@@ -6961,6 +6961,13 @@ function QrScannerView({
     setPatenteCameraActive(true);
     setError('');
 
+    // Verificar que el navegador soporta getUserMedia
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setError('Este navegador no soporta cámara. Usa Chrome o abre la app en un navegador que soporte getUserMedia. También puedes ingresar la patente manualmente con el botón "Ingresar manualmente".');
+      setPatenteCameraActive(false);
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -6983,7 +6990,34 @@ function QrScannerView({
       }, 100);
     } catch (err: any) {
       console.error('Error al abrir cámara para patente:', err);
-      setError('No se pudo abrir la cámara. Verifica los permisos.');
+      let errorMsg = 'No se pudo abrir la cámara. ';
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        errorMsg = 'Permiso de cámara denegado. Ve a Configuración → Aplicaciones → Navegador → Permisos → Cámara → Permitir. También puedes ingresar la patente manualmente.';
+      } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+        errorMsg = 'No se encontró ninguna cámara en el dispositivo. Puedes ingresar la patente manualmente con el botón "Ingresar manualmente".';
+      } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
+        errorMsg = 'La cámara está siendo usada por otra aplicación. Cierra otras apps que usen la cámara e intenta de nuevo, o ingresa la patente manualmente.';
+      } else if (err?.name === 'OverconstrainedError') {
+        // Intentar sin restricciones de cámara trasera
+        try {
+          const stream2 = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          patenteStreamRef.current = stream2;
+          setTimeout(() => {
+            if (patenteVideoRef.current) {
+              patenteVideoRef.current.srcObject = stream2;
+              patenteVideoRef.current.setAttribute('playsinline', 'true');
+              patenteVideoRef.current.muted = true;
+              patenteVideoRef.current.play().catch(() => {});
+            }
+          }, 100);
+          return;
+        } catch {
+          errorMsg = 'La cámara no soporta el modo solicitado. Puedes ingresar la patente manualmente.';
+        }
+      } else {
+        errorMsg = `Error de cámara: ${err?.message || 'desconocido'}. Puedes ingresar la patente manualmente.`;
+      }
+      setError(errorMsg);
       setPatenteCameraActive(false);
     }
   }, []);
@@ -7118,6 +7152,15 @@ function QrScannerView({
     startPatenteCamera();
   }, [startPatenteCamera]);
 
+  // Ingresar patente manualmente (fallback si la cámara no funciona)
+  const startManualPatente = useCallback(() => {
+    setPatenteDetected('MANUAL'); // Usar como flag para mostrar el formulario
+    setPatenteManualEdit('');
+    setPatenteWarning('');
+    setError('');
+    // No abrir cámara
+  }, []);
+
   const handleScan = useCallback(async (code: string) => {
     setError('');
     setSuccess('');
@@ -7137,16 +7180,36 @@ function QrScannerView({
       const match = trimmedCode.toUpperCase().match(/^QR-([A-ZÁÉÍÓÚÑ\s]+)-ENTRADA-/);
       const ubicacion = match ? match[1] : trimmedCode.replace(/^QR-/, '').replace(/-ENTRADA-.*$/, '');
 
-      // Primero registrar el escaneo QR normal (para el historial de rondas)
-      // Luego entrar en modo patentes
-      // Continuamos con el flujo normal abajo, pero marcamos el modo patentes
+      // Activar modo patentes inmediatamente (sin esperar GPS ni servidor)
       setCurrentEntryLocation({
         ubicacion,
         qrCode: trimmedCode.toUpperCase(),
         enteredAt: scannedAt,
       });
-      setSuccess(`Modo patentes activado para ${ubicacion}. Escanea las patentes de los vehículos que entran.`);
-      // Continuar para registrar el escaneo QR también
+      setSuccess(`Modo patentes activado para ${ubicacion}. Toca "Capturar patente" para fotografiar las placas.`);
+
+      // Registrar el escaneo QR en background (sin bloquear la UI)
+      // Si falla, no afecta al modo patentes
+      (async () => {
+        try {
+          await fetch('/api/qr-scans', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              code: trimmedCode,
+              scannedBy: profileName,
+              profileId,
+              latitude: gpsCoords?.lat ?? null,
+              longitude: gpsCoords?.lng ?? null,
+              scannedAt,
+            }),
+          });
+        } catch {
+          // Error silencioso — el modo patentes ya está activo
+        }
+      })();
+
+      return; // No continuar con el flujo normal de registro de QR
     }
 
     // ─── Si es un QR de SALIDA A → cerrar todas las patentes abiertas de esa ubicación ───
@@ -7154,34 +7217,53 @@ function QrScannerView({
       const match = trimmedCode.toUpperCase().match(/^QR-([A-ZÁÉÍÓÚÑ\s]+)-SALIDA-/);
       const ubicacion = match ? match[1] : trimmedCode.replace(/^QR-/, '').replace(/-SALIDA-.*$/, '');
 
-      // Llamar a la API de salida masiva
-      try {
-        const res = await fetch('/api/patentes/salida-masiva', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ubicacion,
-            salidaQrCode: trimmedCode.toUpperCase(),
-            salidaScanId: null,
-            scannedBy: profileName,
-            salidaAt: scannedAt,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setPatenteFlash(`SALIDA: ${data.cerradas} patente(s) cerrada(s) en ${ubicacion}`);
-          setTimeout(() => setPatenteFlash(null), 3000);
-          // Limpiar modo patentes si era esa ubicación
-          if (currentEntryLocationRef.current?.ubicacion === ubicacion) {
-            setCurrentEntryLocation(null);
-          }
-          // Refrescar lista
-          refreshPatentesAbiertasRef.current();
-        }
-      } catch (err) {
-        console.error('Error al cerrar patentes:', err);
+      // Limpiar modo patentes inmediatamente (sin esperar servidor)
+      if (currentEntryLocationRef.current?.ubicacion === ubicacion) {
+        setCurrentEntryLocation(null);
       }
-      // Continuar para registrar el escaneo QR también
+
+      // Cerrar patentes + registrar escaneo QR en background
+      (async () => {
+        try {
+          const [salidaRes, scanRes] = await Promise.allSettled([
+            fetch('/api/patentes/salida-masiva', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ubicacion,
+                salidaQrCode: trimmedCode.toUpperCase(),
+                salidaScanId: null,
+                scannedBy: profileName,
+                salidaAt: scannedAt,
+              }),
+            }),
+            fetch('/api/qr-scans', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                code: trimmedCode,
+                scannedBy: profileName,
+                profileId,
+                latitude: gpsCoords?.lat ?? null,
+                longitude: gpsCoords?.lng ?? null,
+                scannedAt,
+              }),
+            }),
+          ]);
+
+          if (salidaRes.status === 'fulfilled' && salidaRes.value.ok) {
+            const data = await salidaRes.value.json();
+            setPatenteFlash(`SALIDA: ${data.cerradas} patente(s) cerrada(s) en ${ubicacion}`);
+            setTimeout(() => setPatenteFlash(null), 3000);
+          }
+          refreshPatentesAbiertasRef.current();
+        } catch {
+          // Error silencioso
+        }
+      })();
+
+      setSuccess(`Salida registrada en ${ubicacion}. Cerrando patentes...`);
+      return; // No continuar con el flujo normal
     }
 
     // ─── Si es una PATENTE (no empieza con QR-) y hay una ubicación de entrada activa ───
@@ -7656,14 +7738,22 @@ function QrScannerView({
           </div>
         )}
 
-        {/* ─── Botón Capturar Patente (visible cuando hay modo patentes activo) ─── */}
+        {/* ─── Botones de patente (visible cuando hay modo patentes activo) ─── */}
         {currentEntryLocation && !patenteCameraActive && !patenteDetected && (
-          <button
-            onClick={startPatenteCamera}
-            className="w-full py-5 rounded-2xl font-black uppercase text-base flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg bg-blue-600 text-white shadow-blue-200"
-          >
-            <Camera size={22} /> Capturar patente
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={startPatenteCamera}
+              className="w-full py-5 rounded-2xl font-black uppercase text-base flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg bg-blue-600 text-white shadow-blue-200"
+            >
+              <Camera size={22} /> Capturar patente con cámara
+            </button>
+            <button
+              onClick={startManualPatente}
+              className="w-full py-3 rounded-2xl font-black uppercase text-xs flex items-center justify-center gap-2 active:scale-95 transition-transform bg-slate-100 text-slate-600 hover:bg-slate-200"
+            >
+              <Pencil size={16} /> Ingresar manualmente
+            </button>
+          </div>
         )}
 
         {/* ─── Vista de cámara para capturar patente ─── */}
@@ -7714,7 +7804,9 @@ function QrScannerView({
               <div className="w-16 h-16 mx-auto bg-blue-100 rounded-full flex items-center justify-center mb-3">
                 <Car size={32} className="text-blue-600" />
               </div>
-              <p className="text-xs font-black text-slate-400 uppercase mb-2">Patente detectada</p>
+              <p className="text-xs font-black text-slate-400 uppercase mb-2">
+                {patenteDetected === 'MANUAL' ? 'Ingresa la patente' : 'Patente detectada'}
+              </p>
               <input
                 value={patenteManualEdit}
                 onChange={(e) => setPatenteManualEdit(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
@@ -7727,16 +7819,30 @@ function QrScannerView({
                 <p className="text-[10px] text-amber-600 font-bold mt-2">{patenteWarning}</p>
               )}
               <p className="text-[10px] text-slate-400 mt-2">
-                Verifica la patente. Puedes corregirla si es necesario.
+                {patenteDetected === 'MANUAL'
+                  ? 'Escribe la patente (4-7 letras/números).'
+                  : 'Verifica la patente. Puedes corregirla si es necesario.'}
               </p>
             </div>
             <div className="flex gap-2">
               <button
-                onClick={retryPatenteCapture}
+                onClick={() => {
+                  setPatenteDetected(null);
+                  setPatenteManualEdit('');
+                  setPatenteWarning('');
+                }}
                 className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase active:scale-95"
               >
-                Reintentar
+                Cancelar
               </button>
+              {patenteDetected !== 'MANUAL' && (
+                <button
+                  onClick={retryPatenteCapture}
+                  className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase active:scale-95"
+                >
+                  Reintentar
+                </button>
+              )}
               <button
                 onClick={confirmPatente}
                 className="flex-[2] py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95"

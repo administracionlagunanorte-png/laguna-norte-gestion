@@ -28,7 +28,7 @@ const LagunaNorteApp = dynamic(() => import('./LagunaNorteApp'), {
 function CacheBuster() {
   useEffect(() => {
     try {
-      const BUILD_VERSION = '2026-07-11-v9-patentes-camara'; // Cambiar este valor en cada deploy crítico
+      const BUILD_VERSION = '2026-07-11-v10-patentes-fix'; // Cambiar este valor en cada deploy crítico
       const stored = localStorage.getItem('app_build_version');
       if (stored !== BUILD_VERSION) {
         localStorage.setItem('app_build_version', BUILD_VERSION);
