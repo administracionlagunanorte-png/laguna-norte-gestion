@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { useEffect, useState } from 'react';
 
 // Loading spinner shown during SSR (and before client JS hydrates)
 function LoadingSpinner() {
@@ -21,6 +22,38 @@ const LagunaNorteApp = dynamic(() => import('./LagunaNorteApp'), {
   loading: () => <LoadingSpinner />,
 });
 
+// Cache buster: detectar si el usuario tiene una versión antigua cacheada
+// y forzar recarga completa. Esto es crucial para móviles donde Safari/Chrome
+// cachean agresivamente el JS.
+function CacheBuster() {
+  useEffect(() => {
+    try {
+      const BUILD_VERSION = '2026-07-11-v3'; // Cambiar este valor en cada deploy crítico
+      const stored = localStorage.getItem('app_build_version');
+      if (stored !== BUILD_VERSION) {
+        localStorage.setItem('app_build_version', BUILD_VERSION);
+        // Limpiar caches del navegador
+        if ('caches' in window) {
+          caches.keys().then((names) => {
+            names.forEach((name) => caches.delete(name));
+          });
+        }
+        // Forzar recarga con parámetro anti-cache
+        const url = window.location.pathname + '?_v=' + BUILD_VERSION;
+        window.location.replace(url);
+      }
+    } catch {
+      // Si localStorage falla (modo privado), continuar sin hacer nada
+    }
+  }, []);
+  return null;
+}
+
 export default function Home() {
-  return <LagunaNorteApp />;
+  return (
+    <>
+      <CacheBuster />
+      <LagunaNorteApp />
+    </>
+  );
 }
