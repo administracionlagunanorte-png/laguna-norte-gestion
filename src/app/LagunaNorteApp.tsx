@@ -6698,49 +6698,83 @@ function QrScannerView({
   const [scannerInstance, setScannerInstance] = useState<any>(null);
 
   // ─── GPS Status ───
-  const [gpsStatus, setGpsStatus] = useState<'unknown' | 'granted' | 'denied' | 'unavailable' | 'pending'>('unknown');
+  const [gpsStatus, setGpsStatus] = useState<'unknown' | 'granted' | 'denied' | 'unavailable' | 'pending' | 'timeout'>('unknown');
   const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [gpsError, setGpsError] = useState<string>('');
+  const gpsWatchIdRef = useRef<number | null>(null);
+
+  // ─── Función para solicitar GPS ───
+  // En dispositivos Sunmi L2H, el GPS puede tardar 10-30s en fijar satélites,
+  // especialmente en interiores. Usamos watchPosition que es más confiable
+  // que getCurrentPosition en móviles.
+  const requestGps = useCallback(() => {
+    if (!('geolocation' in navigator)) {
+      setGpsStatus('unavailable');
+      setGpsError('Este dispositivo no soporta geolocalización');
+      return;
+    }
+
+    // Limpiar watch anterior si existe
+    if (gpsWatchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+      gpsWatchIdRef.current = null;
+    }
+
+    setGpsStatus('pending');
+    setGpsError('');
+
+    // Primero intentar getCurrentPosition con timeout largo (para fijar satélites)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGpsStatus('granted');
+        setGpsCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setGpsError('');
+        // Una vez obtenida la posición, usar watchPosition para mantenerla actualizada
+        // (consume menos batería que hacer getCurrentPosition cada 30s)
+        gpsWatchIdRef.current = navigator.geolocation.watchPosition(
+          (p) => {
+            setGpsCoords({ lat: p.coords.latitude, lng: p.coords.longitude });
+          },
+          () => { /* ignore watch errors, ya tenemos la primera posición */ },
+          { enableHighAccuracy: true, timeout: 30000, maximumAge: 10000 },
+        );
+      },
+      (err) => {
+        console.warn('[GPS] Error:', err.code, err.message);
+        if (err.code === err.PERMISSION_DENIED) {
+          setGpsStatus('denied');
+          setGpsError('Permiso de ubicación denegado. Ve a Configuración → Aplicaciones → Navegador → Permisos → Ubicación → Permitir');
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          setGpsStatus('unavailable');
+          setGpsError('GPS no disponible. Verifica que el GPS esté activado en Configuración → Ubicación (modo: Alta precisión)');
+        } else if (err.code === err.TIMEOUT) {
+          setGpsStatus('timeout');
+          setGpsError('El GPS tardó demasiado en responder. Sal al aire libre o cerca de una ventana y reintentá');
+        } else {
+          setGpsStatus('unavailable');
+          setGpsError('Error desconocido: ' + err.message);
+        }
+      },
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 },
+    );
+  }, []);
+
+  // ─── Precargar GPS al montar la vista ───
+  useEffect(() => {
+    requestGps();
+    return () => {
+      if (gpsWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+        gpsWatchIdRef.current = null;
+      }
+    };
+  }, [requestGps]);
 
   // ─── Offline State ───
   const [isOnline, setIsOnline] = useState(true);
   const [pendingScans, setPendingScans] = useState<OfflineScan[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ synced: number; failed: number } | null>(null);
-
-  // ─── Precargar GPS al montar la vista ───
-  // Esto hace dos cosas:
-  //   1. Verifica el permiso de geolocalización temprano (mejor UX)
-  //   2. Cachea las coordenadas para que el escaneo sea instantáneo
-  useEffect(() => {
-    if (!('geolocation' in navigator)) {
-      setGpsStatus('unavailable');
-      return;
-    }
-    setGpsStatus('pending');
-    // Algunos navegadores (Safari iOS) requieren que se llame getCurrentPosition
-    // para que aparezca el prompt de permiso. Lo llamamos una vez al montar.
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setGpsStatus('granted');
-        setGpsCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        // Refrescar coordenadas cada 30s para mantener precisión
-        const interval = setInterval(() => {
-          navigator.geolocation.getCurrentPosition(
-            (p) => setGpsCoords({ lat: p.coords.latitude, lng: p.coords.longitude }),
-            () => { /* ignore refresh errors */ },
-            { enableHighAccuracy: true, timeout: 5000, maximumAge: 10000 },
-          );
-        }, 30000);
-        // Limpiar interval al desmontar
-        return () => clearInterval(interval);
-      },
-      (err) => {
-        if (err.code === err.PERMISSION_DENIED) setGpsStatus('denied');
-        else setGpsStatus('unavailable');
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-    );
-  }, []);
 
   // ─── Online/Offline Detection ───
   useEffect(() => {
@@ -6902,25 +6936,39 @@ function QrScannerView({
 
     try {
       // Usar coordenadas cacheadas si están disponibles; si no, intentar
-      // obtener una lectura fresca con timeout corto.
+      // obtener una lectura fresca con timeout más largo (15s) para darle
+      // tiempo al GPS a fijar satélites, especialmente en dispositivos Sunmi.
       let lat: number | null = gpsCoords?.lat ?? null;
       let lng: number | null = gpsCoords?.lng ?? null;
       if ((lat == null || lng == null) && 'geolocation' in navigator) {
+        // Mostrar al usuario que estamos esperando el GPS
+        setGpsStatus('pending');
         try {
           const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
             navigator.geolocation.getCurrentPosition(resolve, reject, {
-              timeout: 5000,
+              timeout: 15000,
               enableHighAccuracy: true,
-              maximumAge: 5000,
+              maximumAge: 30000, // Aceptar lectura de hasta 30s para acelerar
             });
           });
           lat = pos.coords.latitude;
           lng = pos.coords.longitude;
           setGpsCoords({ lat, lng });
           setGpsStatus('granted');
+          setGpsError('');
         } catch (geoErr: any) {
-          if (geoErr?.code === geoErr?.PERMISSION_DENIED) setGpsStatus('denied');
-          // GPS no disponible, continuamos sin coordenadas
+          console.warn('[GPS] Error en handleScan:', geoErr?.code, geoErr?.message);
+          if (geoErr?.code === geoErr?.PERMISSION_DENIED) {
+            setGpsStatus('denied');
+            setGpsError('Permiso de ubicación denegado. Ve a Configuración → Aplicaciones → Navegador → Permisos → Ubicación → Permitir');
+          } else if (geoErr?.code === geoErr?.POSITION_UNAVAILABLE) {
+            setGpsStatus('unavailable');
+            setGpsError('GPS no disponible. Verifica que el GPS esté activado en Configuración → Ubicación (modo: Alta precisión)');
+          } else if (geoErr?.code === geoErr?.TIMEOUT) {
+            setGpsStatus('timeout');
+            setGpsError('El GPS tardó demasiado. Sal al aire libre o cerca de una ventana y reintentá');
+          }
+          // GPS no disponible, continuamos sin coordenadas pero registramos igual
         }
       }
 
@@ -7192,28 +7240,56 @@ function QrScannerView({
             gpsStatus === 'granted' ? 'bg-emerald-50'
             : gpsStatus === 'denied' ? 'bg-red-50'
             : gpsStatus === 'pending' ? 'bg-blue-50'
+            : gpsStatus === 'timeout' ? 'bg-amber-50'
             : 'bg-slate-100'
-          }`} title={gpsCoords ? `GPS: ${gpsCoords.lat.toFixed(6)}, ${gpsCoords.lng.toFixed(6)}` : 'GPS no disponible'}>
+          }`} title={gpsCoords ? `GPS: ${gpsCoords.lat.toFixed(6)}, ${gpsCoords.lng.toFixed(6)}` : (gpsError || 'GPS no disponible')}>
             <MapPinned size={11} className={
               gpsStatus === 'granted' ? 'text-emerald-500'
               : gpsStatus === 'denied' ? 'text-red-500'
               : gpsStatus === 'pending' ? 'text-blue-500 animate-pulse'
+              : gpsStatus === 'timeout' ? 'text-amber-500'
               : 'text-slate-400'
             } />
             <span className={`text-[9px] font-black uppercase ${
               gpsStatus === 'granted' ? 'text-emerald-600'
               : gpsStatus === 'denied' ? 'text-red-600'
               : gpsStatus === 'pending' ? 'text-blue-600'
+              : gpsStatus === 'timeout' ? 'text-amber-600'
               : 'text-slate-500'
             }`}>
               {gpsStatus === 'granted' ? 'GPS activo'
                 : gpsStatus === 'denied' ? 'GPS denegado'
                 : gpsStatus === 'pending' ? 'GPS…'
+                : gpsStatus === 'timeout' ? 'GPS timeout'
                 : gpsStatus === 'unavailable' ? 'GPS no disponible'
                 : 'GPS?'}
             </span>
           </div>
         </div>
+
+        {/* ─── GPS Error Banner con botón reintentar ─── */}
+        {gpsStatus !== 'granted' && gpsError && (
+          <div className={`border p-3 rounded-2xl flex items-start gap-3 ${
+            gpsStatus === 'denied' ? 'bg-red-50 border-red-200'
+            : gpsStatus === 'timeout' ? 'bg-amber-50 border-amber-200'
+            : 'bg-slate-50 border-slate-200'
+          }`}>
+            <MapPinned className={`flex-shrink-0 mt-0.5 ${gpsStatus === 'denied' ? 'text-red-500' : gpsStatus === 'timeout' ? 'text-amber-500' : 'text-slate-500'}`} size={18} />
+            <div className="flex-1 min-w-0">
+              <p className={`text-xs font-black uppercase ${gpsStatus === 'denied' ? 'text-red-700' : gpsStatus === 'timeout' ? 'text-amber-700' : 'text-slate-700'}`}>
+                GPS no disponible
+              </p>
+              <p className="text-[10px] text-slate-600 font-medium mt-1">{gpsError}</p>
+              <button
+                onClick={requestGps}
+                disabled={gpsStatus === 'pending'}
+                className="mt-2 px-3 py-1.5 bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase active:scale-95 transition-transform disabled:opacity-50"
+              >
+                {gpsStatus === 'pending' ? 'Solicitando…' : 'Reintentar GPS'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Success/Error Messages */}
         {success && (
