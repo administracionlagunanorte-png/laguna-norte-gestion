@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import ZAI from 'z-ai-web-dev-sdk'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -11,6 +10,10 @@ export const maxDuration = 30
  *
  * Recibe una foto (base64) de una patente vehicular chilena y usa VLM
  * (Vision Language Model) para extraer el texto de la patente.
+ *
+ * NO usa el SDK z-ai-web-dev-sdk (que requiere archivo .z-ai-config que
+ * no existe en Vercel). En su lugar, hace la llamada HTTP directamente
+ * a la API de ZAI usando fetch.
  *
  * Body:
  *   - image: string (data URL base64, ej: "data:image/jpeg;base64,...")
@@ -24,6 +27,15 @@ export const maxDuration = 30
  *   - Nuevo (2013+): 2 letras + 4 números (AB1234)
  *   - Actual (2020+): 2 letras + 3 números + 1 letra (AB123C)
  */
+
+// Configuración de ZAI — debe estar en variables de entorno de Vercel
+// Si no están, se usan los valores por defecto del entorno de desarrollo
+const ZAI_BASE_URL = process.env.ZAI_BASE_URL || 'https://internal-api.z.ai/v1'
+const ZAI_API_KEY = process.env.ZAI_API_KEY || 'Z.ai'
+const ZAI_TOKEN = process.env.ZAI_TOKEN || ''
+const ZAI_CHAT_ID = process.env.ZAI_CHAT_ID || ''
+const ZAI_USER_ID = process.env.ZAI_USER_ID || ''
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -44,17 +56,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Inicializar VLM
-    const zai = await ZAI.create()
-
-    const response = await zai.chat.completions.createVision({
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `Eres un sistema de lectura de patentes vehiculares chilenas.
+    // Prompt especializado en patentes chilenas
+    const prompt = `Eres un sistema de lectura de patentes vehiculares chilenas.
 
 Observa la imagen y encuentra la patente del vehículo. Las patentes chilenas tienen estos formatos:
 - Formato viejo: 4 letras + 2 números (ej: ABCD12, BRFG78)
@@ -71,19 +74,42 @@ Ejemplos de respuesta válida:
 - ABCD12
 - DJ5678
 - AB123C
-- NO_LEIBLE`,
-            },
-            {
-              type: 'image_url',
-              image_url: { url: image },
-            },
-          ],
-        },
-      ],
-      thinking: { type: 'disabled' },
+- NO_LEIBLE`
+
+    // Llamar directamente a la API de ZAI (sin SDK)
+    const response = await fetch(`${ZAI_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ZAI_API_KEY}`,
+        ...(ZAI_TOKEN ? { 'X-Chat-Id': ZAI_CHAT_ID, 'X-User-Id': ZAI_USER_ID, 'X-Token': ZAI_TOKEN } : {}),
+      },
+      body: JSON.stringify({
+        model: 'glm-4.6v',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: image } },
+            ],
+          },
+        ],
+        thinking: { type: 'disabled' },
+      }),
     })
 
-    const rawText = response.choices[0]?.message?.content?.trim() || ''
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      console.error('[OCR] ZAI API error:', response.status, errText.substring(0, 200))
+      return NextResponse.json(
+        { error: `Error del servicio de visión: ${response.status}` },
+        { status: 502 },
+      )
+    }
+
+    const data = await response.json()
+    const rawText = data.choices?.[0]?.message?.content?.trim() || ''
 
     // Limpiar el resultado: quitar espacios, puntos, guiones
     let patente = rawText
