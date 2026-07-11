@@ -77,13 +77,19 @@ Ejemplos de respuesta válida:
 - NO_LEIBLE`
 
     // Llamar directamente a la API de ZAI (sin SDK)
-    const response = await fetch(`${ZAI_BASE_URL}/chat/completions`, {
+    // Headers según el SDK: Authorization Bearer + X-Z-AI-From: Z + opcionales
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ZAI_API_KEY}`,
+      'X-Z-AI-From': 'Z',
+    }
+    if (ZAI_CHAT_ID) headers['X-Chat-Id'] = ZAI_CHAT_ID
+    if (ZAI_USER_ID) headers['X-User-Id'] = ZAI_USER_ID
+    if (ZAI_TOKEN) headers['X-Token'] = ZAI_TOKEN
+
+    const response = await fetch(`${ZAI_BASE_URL}/chat/completions/vision`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${ZAI_API_KEY}`,
-        ...(ZAI_TOKEN ? { 'X-Chat-Id': ZAI_CHAT_ID, 'X-User-Id': ZAI_USER_ID, 'X-Token': ZAI_TOKEN } : {}),
-      },
+      headers,
       body: JSON.stringify({
         model: 'glm-4.6v',
         messages: [
