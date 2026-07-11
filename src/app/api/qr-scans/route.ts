@@ -37,22 +37,41 @@ export async function GET(request: NextRequest) {
       if (to) where.createdAt.lte = new Date(Number(to))
     }
 
-    // Importante: ejecutar findMany y count en secuencia (no Promise.all)
-    // porque Aiven free tier con connection_limit=1 no soporta queries paralelas.
-    const scans = await withRetry(() =>
+    // Importante: el schema Prisma de la app móvil NO define @relation entre
+    // MovilQrScan y MovilQrLocation (por diseño, para evitar errores de
+    // validación). Por lo tanto no podemos usar `include: { location }`.
+    // Hacemos el lookup manual en dos pasos.
+    const scansRaw = await withRetry(() =>
       db.movilQrScan.findMany({
         where,
-        include: {
-          location: {
-            select: { id: true, name: true, location: true, code: true },
-          },
-        },
         orderBy: { createdAt: 'desc' },
         take: limit,
         skip: offset,
       }),
     )
     const total = await withRetry(() => db.movilQrScan.count({ where }))
+
+    // Hidratar cada scan con su ubicación (lookup manual, con cache)
+    const locationCache = new Map<string, { id: string; name: string; location: string; code: string } | null>()
+    const scans = await Promise.all(
+      scansRaw.map(async (s) => {
+        let loc = locationCache.get(s.qrLocationId)
+        if (loc === undefined) {
+          try {
+            loc = await withRetry(() =>
+              db.movilQrLocation.findUnique({
+                where: { id: s.qrLocationId },
+                select: { id: true, name: true, location: true, code: true },
+              }),
+            )
+          } catch {
+            loc = null
+          }
+          locationCache.set(s.qrLocationId, loc)
+        }
+        return { ...s, location: loc }
+      }),
+    )
 
     return NextResponse.json({ scans, total })
   } catch (err) {
@@ -125,6 +144,9 @@ export async function POST(request: NextRequest) {
     // Crear el escaneo. Si scannedAt es inválido, usar new Date() como fallback.
     const createdAt = isNaN(scannedAt.getTime()) ? new Date() : scannedAt
 
+    // Importante: el schema Prisma de la app móvil NO define @relation entre
+    // MovilQrScan y MovilQrLocation. No podemos usar `include: { location }`
+    // en el create. Hacemos lookup manual después.
     const scan = await withRetry(() =>
       db.movilQrScan.create({
         data: {
@@ -136,15 +158,21 @@ export async function POST(request: NextRequest) {
           notes,
           createdAt,
         },
-        include: {
-          location: {
-            select: { id: true, name: true, location: true, code: true },
-          },
-        },
       }),
     )
 
-    return NextResponse.json(scan)
+    // Lookup manual de la ubicación para devolverla en la respuesta
+    let locationData: { id: string; name: string; location: string; code: string } | null = null
+    try {
+      locationData = await withRetry(() =>
+        db.movilQrLocation.findUnique({
+          where: { id: qrLocationId! },
+          select: { id: true, name: true, location: true, code: true },
+        }),
+      )
+    } catch { /* ignore lookup error */ }
+
+    return NextResponse.json({ ...scan, location: locationData })
   } catch (err) {
     console.error('POST /api/qr-scans error:', err)
     const msg = err instanceof Error ? err.message : 'Error al registrar escaneo'
