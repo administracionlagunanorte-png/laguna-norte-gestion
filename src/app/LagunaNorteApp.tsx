@@ -6403,8 +6403,8 @@ function GuardiasPanel({
             visibleScans.map(scan => (
               <div key={scan.id} className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm">
                 <div className="flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-sm font-black text-slate-800">{scan.location?.name ?? 'Ubicación eliminada'}</span>
                       <span className="text-[7px] font-black bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full">{scan.location?.code}</span>
                     </div>
@@ -6413,7 +6413,7 @@ function GuardiasPanel({
                         <MapPinned size={10} /> {scan.location.location}
                       </p>
                     )}
-                    <div className="flex items-center gap-3 mt-2">
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
                       {scan.scannedBy && (
                         <span className="text-[9px] font-bold text-purple-500 flex items-center gap-1">
                           <ShieldCheck size={9} /> {scan.scannedBy}
@@ -6424,16 +6424,45 @@ function GuardiasPanel({
                       </span>
                     </div>
                     {(scan.latitude != null && scan.longitude != null) && (
-                      <span className="text-[8px] text-emerald-500 font-bold mt-1 inline-block">
+                      <a
+                        href={`https://www.openstreetmap.org/?mlat=${scan.latitude}&mlon=${scan.longitude}#map=18/${scan.latitude}/${scan.longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[8px] text-emerald-500 font-bold mt-1 inline-block hover:underline"
+                      >
                         GPS: {scan.latitude.toFixed(6)}, {scan.longitude.toFixed(6)}
-                      </span>
+                      </a>
                     )}
                     {scan.notes && (
                       <p className="text-[10px] text-slate-400 font-medium mt-1">Nota: {scan.notes}</p>
                     )}
                   </div>
-                  <div className="flex-shrink-0 w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-                    <Scan size={18} className="text-emerald-500" />
+                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+                      <Scan size={18} className="text-emerald-500" />
+                    </div>
+                    {isAdmin && (
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`¿Eliminar esta lectura?\nGuardia: ${scan.scannedBy || '—'}\nFecha: ${formatDateTime(scan.createdAt)}\n\nSolo el admin puede eliminar.`)) return;
+                          try {
+                            const res = await fetch(`/api/qr-scans/${scan.id}`, { method: 'DELETE' });
+                            if (res.ok) {
+                              refetchScans();
+                              alert('Lectura eliminada');
+                            } else {
+                              alert('Error al eliminar');
+                            }
+                          } catch (e) {
+                            alert('Error: ' + (e instanceof Error ? e.message : 'desconocido'));
+                          }
+                        }}
+                        className="text-[8px] font-black uppercase text-red-500 bg-red-50 px-2 py-1 rounded-lg active:scale-95"
+                        title="Eliminar lectura (solo admin)"
+                      >
+                        Eliminar
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
