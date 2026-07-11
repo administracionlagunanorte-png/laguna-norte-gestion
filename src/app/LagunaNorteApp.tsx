@@ -529,12 +529,16 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
   const [lastSync, setLastSync] = useState<number>(0);
   const mountedRef = useRef(false);
   const creatingRef = useRef(false); // Prevent double-creation
+  const fetchingRef = useRef(false); // Prevent parallel fetches
 
   // Fetch from API; fallback to localStorage
   const fetchWorkOrders = useCallback(async (showSyncIndicator = false) => {
+    // Evitar requests paralelas (Aiven free tier tiene límite de conexiones)
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
     try {
       if (showSyncIndicator) setSyncing(true);
-      const res = await fetch('/api/workorders');
+      const res = await fetch('/api/workorders', { cache: 'no-store' });
       if (!res.ok) throw new Error('API not available');
       const data = await res.json();
       const migrated = Array.isArray(data) ? data.map(migrateWorkOrder) : [];
@@ -557,6 +561,7 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
     } finally {
       setLoading(false);
       setSyncing(false);
+      fetchingRef.current = false;
     }
   }, []);
 
@@ -574,10 +579,11 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
     // Then fetch from API (authoritative source)
     fetchWorkOrders(true);
 
-    // Poll every 5 seconds for near-real-time cross-device sync
+    // Poll every 60 seconds for cross-device sync
+    // (reducido de 5s a 60s para no saturar Aiven free tier)
     const interval = setInterval(() => {
       fetchWorkOrders(false);
-    }, 5000);
+    }, 60000);
 
     return () => {
       mountedRef.current = false;
@@ -671,14 +677,14 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
   const updateWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
     if (!data.id) return null;
 
-    // Update state + localStorage immediately
+    // Update state + localStorage immediately (optimistic update)
     setWorkOrders(prev => {
       const updated = prev.map(ot => ot.id === data.id ? { ...ot, ...data } as WorkOrder : ot);
       writeToLocalStorage(updated);
       return updated;
     });
 
-    // Push to API immediately for cross-device sync
+    // Push to API — si falla, devolver null para que el caller sepa
     try {
       const res = await fetch(`/api/workorders/${data.id}`, {
         method: 'PUT',
@@ -688,39 +694,44 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
       if (res.ok) {
         setApiAvailable(true);
         setLastSync(Date.now());
-        fetchWorkOrders(false);
+        // No llamar fetchWorkOrders aquí para evitar requests paralelas
+        return { ...data } as WorkOrder;
       } else {
         setApiAvailable(false);
+        console.error('[updateWorkOrder] Server error:', res.status);
+        return null;
       }
-    } catch {
+    } catch (err) {
       setApiAvailable(false);
+      console.error('[updateWorkOrder] Network error:', err);
+      return null;
     }
-
-    return { ...data } as WorkOrder;
-  }, [fetchWorkOrders]);
+  }, []);
 
   const deleteWorkOrder = useCallback(async (id: string): Promise<boolean> => {
-    // Delete from state + localStorage immediately
-    setWorkOrders(prev => {
-      const updated = prev.filter(ot => ot.id !== id);
-      writeToLocalStorage(updated);
-      return updated;
-    });
-
-    // Push deletion to API immediately for cross-device sync
+    // Push deletion to API FIRST — si falla, no borrar del estado local
     try {
       const res = await fetch(`/api/workorders/${id}?_performedBy=${encodeURIComponent(performedBy || 'admin')}&_profileId=${profileId || ''}`, { method: 'DELETE' });
       if (res.ok) {
         setApiAvailable(true);
         setLastSync(Date.now());
+        // Solo borrar del estado local si el servidor confirmó
+        setWorkOrders(prev => {
+          const updated = prev.filter(ot => ot.id !== id);
+          writeToLocalStorage(updated);
+          return updated;
+        });
+        return true;
       } else {
         setApiAvailable(false);
+        console.error('[deleteWorkOrder] Server error:', res.status);
+        return false;
       }
-    } catch {
+    } catch (err) {
       setApiAvailable(false);
+      console.error('[deleteWorkOrder] Network error:', err);
+      return false;
     }
-
-    return true;
   }, []);
 
   return {
@@ -9718,9 +9729,13 @@ export default function LagunaNorteApp() {
   }, [createWorkOrder, updateWorkOrder, workOrders]);
 
   const handleDeleteOT = useCallback(async (id: string) => {
-    await deleteWorkOrder(id);
-    setIsModalOpen(false);
-    setEditingItem(null);
+    const success = await deleteWorkOrder(id);
+    if (success) {
+      setIsModalOpen(false);
+      setEditingItem(null);
+    } else {
+      setOtSaveError('No se pudo eliminar la OT. Revisa tu conexión e intenta de nuevo.');
+    }
   }, [deleteWorkOrder]);
 
   const handleCreateFromCategory = useCallback((cat: typeof CATEGORIES[number]) => {
