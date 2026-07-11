@@ -6720,6 +6720,15 @@ function QrScannerView({
   }>>([]);
   const [patenteFlash, setPatenteFlash] = useState<string | null>(null);
 
+  // ─── Estado de captura de patentes con cámara + OCR ───
+  const [patenteCameraActive, setPatenteCameraActive] = useState(false);
+  const [patenteProcessing, setPatenteProcessing] = useState(false);
+  const [patenteDetected, setPatenteDetected] = useState<string | null>(null);
+  const [patenteWarning, setPatenteWarning] = useState<string>('');
+  const [patenteManualEdit, setPatenteManualEdit] = useState<string>('');
+  const patenteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const patenteStreamRef = useRef<MediaStream | null>(null);
+
   // ─── Helper: cargar patentes abiertas desde el servidor ───
   const refreshPatentesAbiertas = useCallback(async () => {
     try {
@@ -6941,6 +6950,173 @@ function QrScannerView({
     const interval = setInterval(fetchMyScans, 10000);
     return () => clearInterval(interval);
   }, [profileName]);
+
+  // ─── Funciones para capturar patentes con cámara + OCR ───
+
+  // Abrir la cámara para capturar patente
+  const startPatenteCamera = useCallback(async () => {
+    setPatenteDetected(null);
+    setPatenteWarning('');
+    setPatenteManualEdit('');
+    setPatenteCameraActive(true);
+    setError('');
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+      patenteStreamRef.current = stream;
+
+      // Esperar a que el video element esté disponible
+      setTimeout(() => {
+        if (patenteVideoRef.current) {
+          patenteVideoRef.current.srcObject = stream;
+          patenteVideoRef.current.setAttribute('playsinline', 'true');
+          patenteVideoRef.current.muted = true;
+          patenteVideoRef.current.play().catch(() => {});
+        }
+      }, 100);
+    } catch (err: any) {
+      console.error('Error al abrir cámara para patente:', err);
+      setError('No se pudo abrir la cámara. Verifica los permisos.');
+      setPatenteCameraActive(false);
+    }
+  }, []);
+
+  // Cerrar la cámara de patentes
+  const stopPatenteCamera = useCallback(() => {
+    if (patenteStreamRef.current) {
+      patenteStreamRef.current.getTracks().forEach((t) => t.stop());
+      patenteStreamRef.current = null;
+    }
+    if (patenteVideoRef.current) {
+      patenteVideoRef.current.srcObject = null;
+    }
+    setPatenteCameraActive(false);
+    setPatenteProcessing(false);
+  }, []);
+
+  // Capturar foto y enviar a OCR
+  const capturePatente = useCallback(async () => {
+    if (!patenteVideoRef.current) return;
+
+    const video = patenteVideoRef.current;
+    if (!video.videoWidth || !video.videoHeight) {
+      setError('La cámara aún no está lista. Intenta de nuevo.');
+      return;
+    }
+
+    setPatenteProcessing(true);
+    setError('');
+
+    try {
+      // Crear canvas con la foto
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('No se pudo crear el contexto del canvas');
+      ctx.drawImage(video, 0, 0);
+
+      // Convertir a JPEG base64 (calidad 0.8 para reducir tamaño)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+      // Detener la cámara mientras se procesa
+      if (patenteStreamRef.current) {
+        patenteStreamRef.current.getTracks().forEach((t) => t.stop());
+        patenteStreamRef.current = null;
+      }
+
+      // Enviar a la API de OCR
+      const res = await fetch('/api/patentes/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl }),
+      });
+
+      const data = await res.json();
+
+      if (data.success && data.patente) {
+        setPatenteDetected(data.patente);
+        setPatenteManualEdit(data.patente);
+        setPatenteWarning(data.warning || '');
+      } else {
+        setError(data.error || 'No se pudo leer la patente. Intenta con mejor iluminación.');
+      }
+    } catch (err: any) {
+      console.error('Error al capturar patente:', err);
+      setError('Error al procesar la imagen: ' + (err?.message || 'desconocido'));
+    } finally {
+      setPatenteProcessing(false);
+      setPatenteCameraActive(false);
+    }
+  }, []);
+
+  // Confirmar la patente detectada y registrarla
+  const confirmPatente = useCallback(async () => {
+    const patente = patenteManualEdit.trim().toUpperCase().replace(/\s/g, '');
+    if (!patente || patente.length < 4 || patente.length > 7) {
+      setError('Patente inválida. Debe tener entre 4 y 7 caracteres.');
+      return;
+    }
+
+    const currentLoc = currentEntryLocationRef.current;
+    if (!currentLoc) {
+      setError('No hay ubicación de entrada activa. Escanea un QR de ENTRADA A primero.');
+      return;
+    }
+
+    const scannedAt = Date.now();
+    try {
+      const res = await fetch('/api/patentes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patente,
+          ubicacion: currentLoc.ubicacion,
+          entradaQrCode: currentLoc.qrCode,
+          entradaScanId: currentLoc.scanId || null,
+          scannedBy: profileName,
+          profileId,
+          latitude: gpsCoords?.lat ?? null,
+          longitude: gpsCoords?.lng ?? null,
+          entradaAt: scannedAt,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPatenteFlash(`PATENTE ${patente} registrada en ${currentLoc.ubicacion}`);
+        setTimeout(() => setPatenteFlash(null), 2000);
+        setPatentesAbiertas((prev) => [
+          { id: data.id || `temp_${scannedAt}`, patente, ubicacion: currentLoc.ubicacion, entradaAt: scannedAt },
+          ...prev,
+        ]);
+        refreshPatentesAbiertasRef.current();
+        // Limpiar y cerrar
+        setPatenteDetected(null);
+        setPatenteManualEdit('');
+        setPatenteWarning('');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setError(`Error al registrar patente: ${errData.error || res.status}`);
+      }
+    } catch (err) {
+      setError(`Error de red: ${err instanceof Error ? err.message : 'desconocido'}`);
+    }
+  }, [patenteManualEdit, profileName, profileId, gpsCoords]);
+
+  // Reintentar captura
+  const retryPatenteCapture = useCallback(() => {
+    setPatenteDetected(null);
+    setPatenteManualEdit('');
+    setPatenteWarning('');
+    startPatenteCamera();
+  }, [startPatenteCamera]);
 
   const handleScan = useCallback(async (code: string) => {
     setError('');
@@ -7465,7 +7641,7 @@ function QrScannerView({
               </p>
               <p className="text-sm font-black mt-1">{currentEntryLocation.ubicacion}</p>
               <p className="text-[10px] text-blue-100 mt-0.5">
-                Escanea las patentes de los vehículos que entran. Cuando termines, escanea el QR de SALIDA A.
+                Toca "Capturar patente" para fotografiar la placa del vehículo.
               </p>
             </div>
             <button
@@ -7477,6 +7653,97 @@ function QrScannerView({
             >
               Cancelar
             </button>
+          </div>
+        )}
+
+        {/* ─── Botón Capturar Patente (visible cuando hay modo patentes activo) ─── */}
+        {currentEntryLocation && !patenteCameraActive && !patenteDetected && (
+          <button
+            onClick={startPatenteCamera}
+            className="w-full py-5 rounded-2xl font-black uppercase text-base flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg bg-blue-600 text-white shadow-blue-200"
+          >
+            <Camera size={22} /> Capturar patente
+          </button>
+        )}
+
+        {/* ─── Vista de cámara para capturar patente ─── */}
+        {patenteCameraActive && (
+          <div className="bg-black rounded-2xl overflow-hidden relative">
+            <video
+              ref={patenteVideoRef}
+              className="w-full"
+              style={{ minHeight: '300px', objectFit: 'cover' }}
+              autoPlay
+              playsInline
+              muted
+            />
+            {/* Overlay con guía de posición */}
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+              <div className="w-[80%] h-[100px] border-4 border-white/70 rounded-2xl flex items-center justify-center">
+                <p className="text-white/80 text-[10px] font-black uppercase">
+                  Centra la patente aquí
+                </p>
+              </div>
+            </div>
+            <div className="absolute bottom-0 left-0 right-0 p-4 flex gap-2">
+              <button
+                onClick={stopPatenteCamera}
+                className="flex-1 py-3 bg-red-500 text-white rounded-xl text-xs font-black uppercase active:scale-95"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={capturePatente}
+                disabled={patenteProcessing}
+                className="flex-[2] py-3 bg-white text-slate-800 rounded-xl text-xs font-black uppercase active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {patenteProcessing ? (
+                  <><RefreshCcw size={16} className="animate-spin" /> Procesando...</>
+                ) : (
+                  <><Camera size={16} /> Capturar</>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Pantalla de confirmación de patente detectada ─── */}
+        {patenteDetected && (
+          <div className="bg-white rounded-2xl border-2 border-blue-200 p-6 space-y-4">
+            <div className="text-center">
+              <div className="w-16 h-16 mx-auto bg-blue-100 rounded-full flex items-center justify-center mb-3">
+                <Car size={32} className="text-blue-600" />
+              </div>
+              <p className="text-xs font-black text-slate-400 uppercase mb-2">Patente detectada</p>
+              <input
+                value={patenteManualEdit}
+                onChange={(e) => setPatenteManualEdit(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                className="w-full text-center text-3xl font-black font-mono uppercase tracking-widest p-4 bg-slate-50 rounded-2xl border-2 border-slate-200 focus:border-blue-400 focus:outline-none"
+                maxLength={7}
+                placeholder="ABCD12"
+                autoFocus
+              />
+              {patenteWarning && (
+                <p className="text-[10px] text-amber-600 font-bold mt-2">{patenteWarning}</p>
+              )}
+              <p className="text-[10px] text-slate-400 mt-2">
+                Verifica la patente. Puedes corregirla si es necesario.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={retryPatenteCapture}
+                className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase active:scale-95"
+              >
+                Reintentar
+              </button>
+              <button
+                onClick={confirmPatente}
+                className="flex-[2] py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95"
+              >
+                Confirmar y registrar
+              </button>
+            </div>
           </div>
         )}
 
