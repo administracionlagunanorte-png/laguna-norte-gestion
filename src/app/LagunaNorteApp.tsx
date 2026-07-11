@@ -7161,6 +7161,65 @@ function QrScannerView({
     // No abrir cámara
   }, []);
 
+  // ─── Capturar patente con input file (camera nativa del dispositivo) ───
+  // Este método usa <input type="file" accept="image/*" capture="environment">
+  // que abre la app de cámara nativa del dispositivo. Funciona en cualquier
+  // navegador móvil, incluso los WebView antiguos que no soportan getUserMedia.
+  const patenteFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const startPatenteFileCapture = useCallback(() => {
+    // Simular click en el input file oculto
+    if (patenteFileInputRef.current) {
+      patenteFileInputRef.current.value = ''; // Reset para poder capturar la misma foto dos veces
+      patenteFileInputRef.current.click();
+    }
+  }, []);
+
+  const handlePatenteFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setPatenteProcessing(true);
+    setError('');
+
+    try {
+      // Convertir archivo a base64
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      // Enviar a la API de OCR
+      const res = await fetch('/api/patentes/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl }),
+      });
+
+      const data = await res.json();
+
+      if (data.success && data.patente) {
+        setPatenteDetected(data.patente);
+        setPatenteManualEdit(data.patente);
+        setPatenteWarning(data.warning || '');
+      } else {
+        // Si el OCR falla, mostrar el formulario manual con el error
+        setPatenteDetected('MANUAL');
+        setPatenteManualEdit('');
+        setError(data.error || 'No se pudo leer la patente. Ingrésala manualmente.');
+      }
+    } catch (err: any) {
+      console.error('Error al procesar archivo:', err);
+      setPatenteDetected('MANUAL');
+      setPatenteManualEdit('');
+      setError('Error al procesar la imagen. Ingrésala manualmente.');
+    } finally {
+      setPatenteProcessing(false);
+    }
+  }, []);
+
   const handleScan = useCallback(async (code: string) => {
     setError('');
     setSuccess('');
@@ -7738,21 +7797,59 @@ function QrScannerView({
           </div>
         )}
 
-        {/* ─── Botones de patente (visible cuando hay modo patentes activo) ─── */}
-        {currentEntryLocation && !patenteCameraActive && !patenteDetected && (
+        {/* ─── Botones de patente ─── */}
+        {/* Input file oculto para captura con cámara nativa */}
+        <input
+          ref={patenteFileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handlePatenteFile}
+          className="hidden"
+        />
+
+        {/* Botones SIEMPRE visibles en modo guardia */}
+        {isGuardiaMode && !patenteCameraActive && !patenteDetected && !patenteProcessing && (
           <div className="space-y-2">
-            <button
-              onClick={startPatenteCamera}
-              className="w-full py-5 rounded-2xl font-black uppercase text-base flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg bg-blue-600 text-white shadow-blue-200"
-            >
-              <Camera size={22} /> Capturar patente con cámara
-            </button>
+            {currentEntryLocation && (
+              <>
+                <button
+                  onClick={startPatenteFileCapture}
+                  className="w-full py-5 rounded-2xl font-black uppercase text-base flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg bg-blue-600 text-white shadow-blue-200"
+                >
+                  <Camera size={22} /> Fotografiar patente
+                </button>
+                <button
+                  onClick={startPatenteCamera}
+                  className="w-full py-3 rounded-2xl font-black uppercase text-xs flex items-center justify-center gap-2 active:scale-95 transition-transform bg-slate-100 text-slate-600 hover:bg-slate-200"
+                >
+                  <Camera size={16} /> Cámara en vivo (alternativo)
+                </button>
+              </>
+            )}
             <button
               onClick={startManualPatente}
-              className="w-full py-3 rounded-2xl font-black uppercase text-xs flex items-center justify-center gap-2 active:scale-95 transition-transform bg-slate-100 text-slate-600 hover:bg-slate-200"
+              className={`w-full py-4 rounded-2xl font-black uppercase text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform ${
+                currentEntryLocation
+                  ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  : 'bg-blue-600 text-white shadow-lg shadow-blue-200'
+              }`}
             >
-              <Pencil size={16} /> Ingresar manualmente
+              <Pencil size={18} /> {currentEntryLocation ? 'Ingresar patente manualmente' : 'Registrar patente manualmente'}
             </button>
+            {!currentEntryLocation && (
+              <p className="text-[10px] text-amber-600 font-bold text-center">
+                ⚠️ Primero escanea el QR de ENTRADA A con el láser, luego registra las patentes.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ─── Procesando patente (spinner) ─── */}
+        {patenteProcessing && (
+          <div className="bg-blue-50 border border-blue-200 p-6 rounded-2xl flex items-center justify-center gap-3">
+            <RefreshCcw size={24} className="text-blue-500 animate-spin" />
+            <p className="text-sm font-black text-blue-700 uppercase">Leyendo patente...</p>
           </div>
         )}
 
