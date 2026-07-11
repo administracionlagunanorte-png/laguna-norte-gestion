@@ -6697,6 +6697,56 @@ function QrScannerView({
   const [myScans, setMyScans] = useState<QrScanItem[]>([]);
   const [scannerInstance, setScannerInstance] = useState<any>(null);
 
+  // ─── Estado del modo patentes vehiculares ───
+  // Cuando el guardia escanea un QR de "ENTRADA A" (ej: QR-FLAMENCOS-ENTRADA-A),
+  // entra en modo registro para esa ubicación. Los siguientes escaneos que
+  // NO sean QR (o sea, patentes) se registran como entrando a esa ubicación.
+  // Al escanear el QR de "SALIDA A", se cierran todas las patentes abiertas.
+  const [currentEntryLocation, setCurrentEntryLocation] = useState<{
+    ubicacion: string;
+    qrCode: string;
+    scanId?: string;
+    enteredAt: number;
+  } | null>(null);
+  // Ref para acceder al valor actual dentro de handleScan (evita stale closure)
+  const currentEntryLocationRef = useRef(currentEntryLocation);
+  useEffect(() => { currentEntryLocationRef.current = currentEntryLocation; }, [currentEntryLocation]);
+
+  const [patentesAbiertas, setPatentesAbiertas] = useState<Array<{
+    id: string;
+    patente: string;
+    ubicacion: string;
+    entradaAt: number;
+  }>>([]);
+  const [patenteFlash, setPatenteFlash] = useState<string | null>(null);
+
+  // ─── Helper: cargar patentes abiertas desde el servidor ───
+  const refreshPatentesAbiertas = useCallback(async () => {
+    try {
+      const res = await fetch('/api/patentes?soloAbiertas=true&limit=500', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.patentes)) {
+          setPatentesAbiertas(data.patentes.map((p: any) => ({
+            id: p.id,
+            patente: p.patente,
+            ubicacion: p.ubicacion,
+            entradaAt: new Date(p.entradaAt).getTime(),
+          })));
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+  const refreshPatentesAbiertasRef = useRef(refreshPatentesAbiertas);
+  useEffect(() => { refreshPatentesAbiertasRef.current = refreshPatentesAbiertas; }, [refreshPatentesAbiertas]);
+
+  // Cargar patentes abiertas al montar y cada 30s
+  useEffect(() => {
+    refreshPatentesAbiertas();
+    const interval = setInterval(refreshPatentesAbiertas, 30000);
+    return () => clearInterval(interval);
+  }, [refreshPatentesAbiertas]);
+
   // ─── GPS Status ───
   const [gpsStatus, setGpsStatus] = useState<'unknown' | 'granted' | 'denied' | 'unavailable' | 'pending' | 'timeout'>('unknown');
   const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -6936,7 +6986,7 @@ function QrScannerView({
           body: JSON.stringify({
             ubicacion,
             salidaQrCode: trimmedCode.toUpperCase(),
-            salidaScanId: null, // se podría vincular al scan QR si fuera necesario
+            salidaScanId: null,
             scannedBy: profileName,
             salidaAt: scannedAt,
           }),
@@ -6946,11 +6996,11 @@ function QrScannerView({
           setPatenteFlash(`SALIDA: ${data.cerradas} patente(s) cerrada(s) en ${ubicacion}`);
           setTimeout(() => setPatenteFlash(null), 3000);
           // Limpiar modo patentes si era esa ubicación
-          if (currentEntryLocation?.ubicacion === ubicacion) {
+          if (currentEntryLocationRef.current?.ubicacion === ubicacion) {
             setCurrentEntryLocation(null);
           }
           // Refrescar lista
-          refreshPatentesAbiertas();
+          refreshPatentesAbiertasRef.current();
         }
       } catch (err) {
         console.error('Error al cerrar patentes:', err);
@@ -6959,9 +7009,10 @@ function QrScannerView({
     }
 
     // ─── Si es una PATENTE (no empieza con QR-) y hay una ubicación de entrada activa ───
-    if (!isQrCode && currentEntryLocation) {
+    if (!isQrCode && currentEntryLocationRef.current) {
+      const currentLoc = currentEntryLocationRef.current;
       const patente = trimmedCode.toUpperCase().replace(/\s/g, '');
-      // Validación básica de patente chilena: 4-6 letras/números
+      // Validación básica de patente chilena: 4-7 letras/números
       if (patente.length < 4 || patente.length > 7) {
         setError(`Patente inválida: "${patente}". Debe tener entre 4 y 7 caracteres.`);
         return;
@@ -6973,9 +7024,9 @@ function QrScannerView({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             patente,
-            ubicacion: currentEntryLocation.ubicacion,
-            entradaQrCode: currentEntryLocation.qrCode,
-            entradaScanId: currentEntryLocation.scanId || null,
+            ubicacion: currentLoc.ubicacion,
+            entradaQrCode: currentLoc.qrCode,
+            entradaScanId: currentLoc.scanId || null,
             scannedBy: profileName,
             profileId,
             latitude: gpsCoords?.lat ?? null,
@@ -6985,16 +7036,16 @@ function QrScannerView({
         });
         if (res.ok) {
           const data = await res.json();
-          setPatenteFlash(`PATENTE ${patente} registrada en ${currentEntryLocation.ubicacion}`);
+          setPatenteFlash(`PATENTE ${patente} registrada en ${currentLoc.ubicacion}`);
           setTimeout(() => setPatenteFlash(null), 2000);
           // Agregar a la lista local
           setPatentesAbiertas(prev => [{
             id: data.id || `temp_${scannedAt}`,
             patente,
-            ubicacion: currentEntryLocation.ubicacion,
+            ubicacion: currentLoc.ubicacion,
             entradaAt: scannedAt,
           }, ...prev]);
-          refreshPatentesAbiertas();
+          refreshPatentesAbiertasRef.current();
         } else {
           const errData = await res.json().catch(() => ({}));
           setError(`Error al registrar patente: ${errData.error || res.status}`);
@@ -7006,7 +7057,7 @@ function QrScannerView({
     }
 
     // ─── Si es una patente pero NO hay ubicación de entrada activa ───
-    if (!isQrCode && !currentEntryLocation) {
+    if (!isQrCode && !currentEntryLocationRef.current) {
       setError(`Escaneaste la patente "${trimmedCode.toUpperCase()}" pero no has escaneado un QR de ENTRADA A primero. Escanea el QR de entrada del condominio antes de registrar patentes.`);
       return;
     }
@@ -7145,56 +7196,12 @@ function QrScannerView({
       saveOfflineFallback(`Error inesperado: ${err?.message || 'desconocido'}`);
       setError(`Error al registrar escaneo. Se guardó localmente: ${err?.message || ''}`);
     }
-  }, [profileName, profileId, notes, gpsCoords, currentEntryLocation, refreshPatentesAbiertas]);
+  }, [profileName, profileId, notes, gpsCoords]);
 
   // ─── Estado del láser Sunmi ───
   // Muestra feedback visual cuando el láser está capturando un código
   const [laserActive, setLaserActive] = useState(false);
   const laserTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ─── Estado del modo patentes vehiculares ───
-  // Cuando el guardia escanea un QR de "ENTRADA A" (ej: QR-FLAMENCOS-ENTRADA-A),
-  // entra en modo registro para esa ubicación. Los siguientes escaneos que
-  // NO sean QR (o sea, patentes) se registran como entrando a esa ubicación.
-  // Al escanear el QR de "SALIDA A", se cierran todas las patentes abiertas.
-  const [currentEntryLocation, setCurrentEntryLocation] = useState<{
-    ubicacion: string;
-    qrCode: string;
-    scanId?: string;
-    enteredAt: number;
-  } | null>(null);
-  const [patentesAbiertas, setPatentesAbiertas] = useState<Array<{
-    id: string;
-    patente: string;
-    ubicacion: string;
-    entradaAt: number;
-  }>>([]);
-  const [patenteFlash, setPatenteFlash] = useState<string | null>(null);
-
-  // ─── Helper: cargar patentes abiertas desde el servidor ───
-  const refreshPatentesAbiertas = useCallback(async () => {
-    try {
-      const res = await fetch('/api/patentes?soloAbiertas=true&limit=500', { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.patentes)) {
-          setPatentesAbiertas(data.patentes.map((p: any) => ({
-            id: p.id,
-            patente: p.patente,
-            ubicacion: p.ubicacion,
-            entradaAt: new Date(p.entradaAt).getTime(),
-          })));
-        }
-      }
-    } catch { /* ignore */ }
-  }, []);
-
-  // Cargar patentes abiertas al montar y cada 30s
-  useEffect(() => {
-    refreshPatentesAbiertas();
-    const interval = setInterval(refreshPatentesAbiertas, 30000);
-    return () => clearInterval(interval);
-  }, [refreshPatentesAbiertas]);
 
   // ─── Hook para capturar láser Sunmi (keyboard wedge) ───
   // En modo guardia, SIEMPRE activo. En modo admin, solo si no está
