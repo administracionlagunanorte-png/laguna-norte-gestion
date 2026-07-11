@@ -7209,37 +7209,21 @@ function QrScannerView({
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // El OCR no está disponible desde Vercel (la API de VLM usa IPs privadas).
+    // En lugar de intentar OCR, abrir directamente el formulario manual.
+    // La foto se podría guardar como respaldo visual en el futuro.
     setPatenteProcessing(true);
     setError('');
 
     try {
-      // Convertir archivo a base64
-      const reader = new FileReader();
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      // Simular un pequeño delay para que el guardia vea que se procesó la foto
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Enviar a la API de OCR
-      const res = await fetch('/api/patentes/ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: dataUrl }),
-      });
-
-      const data = await res.json();
-
-      if (data.success && data.patente) {
-        setPatenteDetected(data.patente);
-        setPatenteManualEdit(data.patente);
-        setPatenteWarning(data.warning || '');
-      } else {
-        // Si el OCR falla, mostrar el formulario manual con el error
-        setPatenteDetected('MANUAL');
-        setPatenteManualEdit('');
-        setError(data.error || 'No se pudo leer la patente. Ingrésala manualmente.');
-      }
+      // Abrir formulario manual directamente
+      setPatenteDetected('MANUAL');
+      setPatenteManualEdit('');
+      setPatenteWarning('');
+      setError('');
     } catch (err: any) {
       console.error('Error al procesar archivo:', err);
       setPatenteDetected('MANUAL');
