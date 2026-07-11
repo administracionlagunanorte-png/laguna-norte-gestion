@@ -6730,7 +6730,11 @@ function QrScannerView({
   const patenteStreamRef = useRef<MediaStream | null>(null);
 
   // ─── Helper: cargar patentes abiertas desde el servidor ───
+  const refreshingPatentesRef = useRef(false);
   const refreshPatentesAbiertas = useCallback(async () => {
+    // Evitar requests paralelas (Aiven free tier tiene límite de conexiones)
+    if (refreshingPatentesRef.current) return;
+    refreshingPatentesRef.current = true;
     try {
       const res = await fetch('/api/patentes?soloAbiertas=true&limit=500', { cache: 'no-store' });
       if (res.ok) {
@@ -6744,15 +6748,18 @@ function QrScannerView({
           })));
         }
       }
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally {
+      refreshingPatentesRef.current = false;
+    }
   }, []);
   const refreshPatentesAbiertasRef = useRef(refreshPatentesAbiertas);
   useEffect(() => { refreshPatentesAbiertasRef.current = refreshPatentesAbiertas; }, [refreshPatentesAbiertas]);
 
-  // Cargar patentes abiertas al montar y cada 30s
+  // Cargar patentes abiertas al montar y cada 60s (reducido para evitar
+  // too many connections en Aiven free tier)
   useEffect(() => {
     refreshPatentesAbiertas();
-    const interval = setInterval(refreshPatentesAbiertas, 30000);
+    const interval = setInterval(refreshPatentesAbiertas, 60000);
     return () => clearInterval(interval);
   }, [refreshPatentesAbiertas]);
 
@@ -6934,20 +6941,25 @@ function QrScannerView({
     }
   }, [isOnline, pendingScans.length, syncPendingScans]);
 
-  // Load my recent scans
+  // Load my recent scans (cada 45s para reducir conexiones a BD Aiven)
+  const fetchingMyScansRef = useRef(false);
   useEffect(() => {
     const fetchMyScans = async () => {
       if (!navigator.onLine) return; // Don't fetch if offline
+      if (fetchingMyScansRef.current) return; // Evitar paralelas
+      fetchingMyScansRef.current = true;
       try {
-        const res = await fetch(`/api/qr-scans?scannedBy=${encodeURIComponent(profileName)}&limit=20`);
+        const res = await fetch(`/api/qr-scans?scannedBy=${encodeURIComponent(profileName)}&limit=20`, { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
           setMyScans(Array.isArray(data.scans) ? data.scans : []);
         }
-      } catch { /* ignore */ }
+      } catch { /* ignore */ } finally {
+        fetchingMyScansRef.current = false;
+      }
     };
     fetchMyScans();
-    const interval = setInterval(fetchMyScans, 10000);
+    const interval = setInterval(fetchMyScans, 45000);
     return () => clearInterval(interval);
   }, [profileName]);
 
