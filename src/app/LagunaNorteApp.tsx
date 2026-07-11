@@ -9158,13 +9158,7 @@ function HamburgerMenu({
 
   const menuItems: { view: AppView; label: string; emoji: string; adminOnly?: boolean; supervisorCanSee?: boolean; guardiaCanSee?: boolean }[] = [
     { view: 'main', label: 'Planificación', emoji: '📋' },
-    { view: 'calendar', label: 'Calendario', emoji: '📅' },
-    { view: 'recurring', label: 'OTs Repetitivas', emoji: '🔄', adminOnly: true },
-    { view: 'dashboard', label: 'Dashboard', emoji: '📊', adminOnly: true, supervisorCanSee: true },
-    { view: 'inventario', label: 'Inventario', emoji: '🔧', adminOnly: true },
     { view: 'guardias', label: 'Guardias', emoji: '🔒', adminOnly: true, guardiaCanSee: true },
-    { view: 'admin', label: 'Administración', emoji: '⚙️', adminOnly: true },
-    { view: 'auditoria', label: 'Historial', emoji: '📜', adminOnly: true },
   ];
 
   const handleNavigate = (view: AppView) => {

@@ -70,43 +70,68 @@ export async function POST(request: NextRequest) {
     const titulo = activities.length > 0 ? activities.join(', ') : (body.description || 'OT Móvil');
     const estado = mapearEstadoSistema(body.status || 'Pendiente');
 
-    // Generar número de OT usando Secuencia (compartido con sistema escritorio)
-    const secuencia = await withRetry(() =>
-      db.secuencia.upsert({
-        where: { tabla: 'OrdenTrabajo' },
-        update: { ultimoNum: { increment: 1 } },
-        create: { tabla: 'OrdenTrabajo', prefijo: 'OT', ultimoNum: 1, padding: 4 },
-      })
-    );
-    secuenciaNum = secuencia.ultimoNum;
-    const otNum = `OT-${String(secuencia.ultimoNum).padStart(4, '0')}`;
-
     // Auto-set timestamps
     const ahora = new Date().toISOString();
     const fechaInicioReal = (body.status === 'En Proceso' || body.status === 'Terminada') ? ahora : null;
     const fechaFinReal = body.status === 'Terminada' ? ahora : null;
 
-    const nuevaOT = await withRetry(() =>
-      db.ordenTrabajo.create({
-        data: {
-          otNum,
-          titulo,
-          tipo: 'Correctivo',
-          prioridad: 'Media',
-          estado,
-          ubicacion: body.zoneName || null,
-          descripcion: body.description || null,
-          fechaInicio: body.plannedDate ? new Date(body.plannedDate).toISOString().split('T')[0] : null,
-          fechaInicioReal,
-          fechaFinReal,
-          fotosAntes: body.photosBefore?.length > 0 ? JSON.stringify(body.photosBefore) : null,
-          fotosDespues: body.photosAfter?.length > 0 ? JSON.stringify(body.photosAfter) : null,
-          progreso: body.status === 'Terminada' ? 100 : (body.status === 'En Proceso' ? 50 : 0),
-          asignadoId: body.collaborators?.[0] || null,
-          estadoAprobacion: 'Pendiente',
-        },
-      })
-    );
+    // ─── Generar número de OT con reintento automático si hay conflicto ───
+    // Si el otNum ya existe (unique constraint), incrementar y reintentar
+    // hasta 10 veces para encontrar un número libre.
+    let nuevaOT: any = null;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    while (!nuevaOT && attempts < maxAttempts) {
+      attempts++;
+      // Incrementar contador
+      const secuencia = await withRetry(() =>
+        db.secuencia.upsert({
+          where: { tabla: 'OrdenTrabajo' },
+          update: { ultimoNum: { increment: 1 } },
+          create: { tabla: 'OrdenTrabajo', prefijo: 'OT', ultimoNum: 1, padding: 4 },
+        })
+      );
+      secuenciaNum = secuencia.ultimoNum;
+      const otNum = `OT-${String(secuencia.ultimoNum).padStart(4, '0')}`;
+
+      try {
+        nuevaOT = await withRetry(() =>
+          db.ordenTrabajo.create({
+            data: {
+              otNum,
+              titulo,
+              tipo: 'Correctivo',
+              prioridad: 'Media',
+              estado,
+              ubicacion: body.zoneName || null,
+              descripcion: body.description || null,
+              fechaInicio: body.plannedDate ? new Date(body.plannedDate).toISOString().split('T')[0] : null,
+              fechaInicioReal,
+              fechaFinReal,
+              fotosAntes: body.photosBefore?.length > 0 ? JSON.stringify(body.photosBefore) : null,
+              fotosDespues: body.photosAfter?.length > 0 ? JSON.stringify(body.photosAfter) : null,
+              progreso: body.status === 'Terminada' ? 100 : (body.status === 'En Proceso' ? 50 : 0),
+              asignadoId: body.collaborators?.[0] || null,
+              estadoAprobacion: 'Pendiente',
+            },
+          })
+        );
+      } catch (createErr: any) {
+        // Si es error de unique constraint (P2002), el otNum ya existe
+        // → continuar el loop para intentar con el siguiente número
+        if (createErr?.code === 'P2002') {
+          console.warn(`[workorders] OT ${otNum} ya existe, reintentando con siguiente número...`);
+          continue;
+        }
+        // Otro error → propagar
+        throw createErr;
+      }
+    }
+
+    if (!nuevaOT) {
+      throw new Error('No se pudo crear la OT después de 10 intentos (todos los números ya existen)');
+    }
 
     return NextResponse.json(serializeOT(nuevaOT), { status: 201 });
   } catch (error: any) {
