@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db, withRetry } from '@/lib/db'
 
+// Forzar renderizado dinámico — sin caché
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 /**
  * GET /api/qr-scans
  * Lista los escaneos con filtros opcionales.

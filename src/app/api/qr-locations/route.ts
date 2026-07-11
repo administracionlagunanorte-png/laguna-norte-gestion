@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db, withRetry } from '@/lib/db'
 
+// Forzar renderizado dinámico — sin caché
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export async function GET() {
   try {
     const locations = await withRetry(() => db.movilQrLocation.findMany({ where: { active: true } }))

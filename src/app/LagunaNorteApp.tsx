@@ -890,7 +890,7 @@ function useQrLocations(performedBy?: string, profileId?: string) {
 
   const fetchLocations = useCallback(async () => {
     try {
-      const res = await fetch('/api/qr-locations');
+      const res = await fetch(`/api/qr-locations?_t=${Date.now()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('API not available');
       const data = await res.json();
       setLocations(Array.isArray(data) ? data : []);
@@ -967,8 +967,10 @@ function useQrScans() {
       if (filters?.to) params.set('to', String(filters.to));
       if (filters?.limit) params.set('limit', String(filters.limit));
       if (filters?.offset) params.set('offset', String(filters.offset));
+      // Timestamp anti-caché
+      params.set('_t', String(Date.now()));
 
-      const res = await fetch(`/api/qr-scans?${params.toString()}`);
+      const res = await fetch(`/api/qr-scans?${params.toString()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('API not available');
       const data = await res.json();
       setScans(Array.isArray(data.scans) ? data.scans : []);
@@ -6223,6 +6225,14 @@ function GuardiasPanel({
           <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Guardias</h2>
           <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Control de rondas y ubicaciones</p>
         </div>
+        {/* Botón Actualizar (siempre visible) */}
+        <button
+          onClick={() => { refetchLocations(); refetchScans(); }}
+          className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-700 rounded-xl text-[10px] font-black uppercase active:scale-95 transition-transform hover:bg-slate-200"
+          title="Recargar ubicaciones y escaneos"
+        >
+          <RefreshCcw size={14} /> Actualizar
+        </button>
         {isGuardia && onScan && (
           <button
             onClick={onScan}
