@@ -6569,6 +6569,91 @@ interface OfflineScan {
 
 const OFFLINE_SCANS_KEY = 'laguna_norte_offline_scans';
 
+/* ─── Hook: useLaserScanner ─── */
+// Captura input del láser Sunmi (y otros dispositivos tipo "keyboard wedge").
+// El láser envía una ráfaga rápida de caracteres (50-100ms entre cada uno)
+// terminando con Enter. Esto lo diferencia de un humano tecleando, que es
+// mucho más lento (>200ms entre teclas).
+//
+// Funcionamiento:
+//   1. Escucha keydown globalmente
+//   2. Si las teclas llegan rápido (<150ms entre ellas), las acumula
+//   3. Al recibir Enter, dispara onScan con el código acumulado
+//   4. Si pasa >500ms sin teclas, resetea el buffer (timeout de seguridad)
+//
+// Solo se activa si el focus NO está en un input/textarea (para no interferir
+// con el tecleo manual del usuario).
+function useLaserScanner(onScan: (code: string) => void, enabled: boolean = true) {
+  const bufferRef = useRef<string>('');
+  const lastKeyTimeRef = useRef<number>(0);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mantener referencia fresca del callback sin re-registrar el listener
+  const onScanRef = useRef(onScan);
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // No interferir si el usuario está escribiendo en un campo
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      const now = Date.now();
+      const timeSinceLast = now - lastKeyTimeRef.current;
+      lastKeyTimeRef.current = now;
+
+      // Enter = fin del código escaneado
+      if (e.key === 'Enter') {
+        if (bufferRef.current.length >= 2) {
+          const code = bufferRef.current.trim();
+          bufferRef.current = '';
+          if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+          if (code) {
+            e.preventDefault();
+            e.stopPropagation();
+            onScanRef.current(code);
+          }
+        } else {
+          bufferRef.current = '';
+        }
+        return;
+      }
+
+      // Si pasó mucho tiempo desde la última tecla, empezar nuevo buffer
+      // (esto filtra tecleo humano lento)
+      if (timeSinceLast > 500 && bufferRef.current.length > 0) {
+        bufferRef.current = '';
+      }
+
+      // Ignorar teclas modificadoras y de control
+      if (e.key.length === 1) {
+        bufferRef.current += e.key;
+      } else if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
+        // no hacer nada, pero no resetear
+      } else {
+        // otras teclas especiales (Tab, Escape, flechas) resetean
+        bufferRef.current = '';
+      }
+
+      // Timeout de seguridad: si no llega Enter en 2s, resetear
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => {
+        bufferRef.current = '';
+      }, 2000);
+    };
+
+    // capture: true para interceptar antes que otros handlers
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, [enabled]);
+}
+
 function getOfflineScans(): OfflineScan[] {
   try {
     const data = localStorage.getItem(OFFLINE_SCANS_KEY);
@@ -6900,6 +6985,29 @@ function QrScannerView({
     }
   }, [profileName, profileId, notes, gpsCoords]);
 
+  // ─── Estado del láser Sunmi ───
+  // Muestra feedback visual cuando el láser está capturando un código
+  const [laserActive, setLaserActive] = useState(false);
+  const laserTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ─── Hook para capturar láser Sunmi (keyboard wedge) ───
+  // En modo guardia, SIEMPRE activo. En modo admin, solo si no está
+  // escribiendo en el input manual.
+  useLaserScanner((code) => {
+    // Feedback visual: mostrar que se detectó el láser
+    setLaserActive(true);
+    if (laserTimeoutRef.current) clearTimeout(laserTimeoutRef.current);
+    laserTimeoutRef.current = setTimeout(() => setLaserActive(false), 1000);
+    // Detener escáner de cámara si está activo (no necesitamos ambas)
+    if (scannerInstance) {
+      try { scannerInstance.stop(); } catch { /* ignore */ }
+      setScannerInstance(null);
+      setScanning(false);
+    }
+    // Disparar registro del escaneo
+    handleScan(code);
+  }, true);
+
   const startScanner = useCallback(async () => {
     setScanning(true);
     setError('');
@@ -6950,28 +7058,44 @@ function QrScannerView({
   }, [scannerInstance]);
 
   // ─── Auto-start scanner en modo guardia ───
-  // Cuando el guardia entra, la cámara debe abrirse automáticamente para
-  // que pueda escanear inmediatamente sin tener que tocar ningún botón.
-  useEffect(() => {
-    if (isGuardiaMode && !scanning && !scannerInstance && !error) {
-      // Pequeño delay para asegurar que el componente esté montado
-      const timer = setTimeout(() => {
-        startScanner();
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-  }, [isGuardiaMode, scanning, scannerInstance, error, startScanner]);
+  // NOTA: Para dispositivos Sunmi con láser (modelo L2H), el láser es el
+  // método principal de escaneo y no necesita cámara. El hook useLaserScanner
+  // está siempre activo. La cámara solo se inicia si el guardia la toca.
+  // Para dispositivos sin láser, dejamos la cámara disponible pero no
+  // auto-iniciada para no pedir permiso innecesario.
+  // Si en el futuro se quiere auto-start de cámara, descomentar:
+  // useEffect(() => {
+  //   if (isGuardiaMode && !scanning && !scannerInstance && !error) {
+  //     const timer = setTimeout(() => startScanner(), 300);
+  //     return () => clearTimeout(timer);
+  //   }
+  // }, [isGuardiaMode, scanning, scannerInstance, error, startScanner]);
 
   return (
     <div className="flex-1 flex flex-col">
+      {/* Overlay de láser detectado */}
+      {laserActive && (
+        <div className="fixed inset-0 z-[100] bg-teal-500/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+          <div className="bg-white rounded-3xl p-6 shadow-2xl flex flex-col items-center">
+            <div className="w-16 h-16 bg-teal-100 rounded-full flex items-center justify-center mb-2 animate-pulse">
+              <Scan size={32} className="text-teal-600" />
+            </div>
+            <p className="text-sm font-black text-teal-700 uppercase">Código detectado</p>
+            <p className="text-[10px] text-teal-500 font-bold">Registrando...</p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="sticky top-0 z-30 bg-white border-b border-slate-100 p-4 flex items-center gap-3">
         {isGuardiaMode ? (
           <div className="flex-1">
             <h2 className="text-sm font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-              <Scan size={16} className="text-teal-500" /> Escanear QR
+              <Scan size={16} className={laserActive ? 'text-teal-500 animate-pulse' : 'text-teal-500'} /> Escanear QR
             </h2>
-            <p className="text-[8px] font-black text-teal-500 uppercase tracking-widest">{profileName}</p>
+            <p className="text-[8px] font-black text-teal-500 uppercase tracking-widest">
+              {profileName} · Láser activo
+            </p>
           </div>
         ) : (
           <>
@@ -7120,35 +7244,77 @@ function QrScannerView({
         )}
 
         {/* Scanner Area */}
-        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
-          <div id="qr-reader" className="w-full" style={{ minHeight: scanning ? '300px' : '0' }}></div>
-          {!scanning && (
+        {isGuardiaMode ? (
+          // ─── Modo guardia: mostrar panel de láser listo ───
+          <div className={`bg-gradient-to-br ${laserActive ? 'from-teal-50 to-teal-100 border-teal-300' : 'from-white to-slate-50 border-slate-100'} rounded-2xl border-2 overflow-hidden shadow-sm transition-all`}>
             <div className="p-8 text-center">
-              <QrCode className="mx-auto text-slate-200 mb-3" size={60} />
-              <p className="text-slate-400 text-xs font-bold">Presiona el botón para escanear</p>
+              <div className={`w-24 h-24 mx-auto mb-4 rounded-full flex items-center justify-center transition-all ${laserActive ? 'bg-teal-500 animate-pulse scale-110' : 'bg-teal-100'}`}>
+                <Scan size={48} className={laserActive ? 'text-white' : 'text-teal-500'} />
+              </div>
+              <p className="text-base font-black text-slate-800 uppercase mb-1">
+                {laserActive ? '¡Código detectado!' : 'Láser listo'}
+              </p>
+              <p className="text-xs text-slate-500 font-bold mb-3">
+                {laserActive ? 'Registrando escaneo...' : 'Presiona el gatillo del láser para escanear'}
+              </p>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-teal-50 rounded-full">
+                <div className={`w-2 h-2 rounded-full ${laserActive ? 'bg-teal-500 animate-pulse' : 'bg-teal-400'}`} />
+                <span className="text-[9px] font-black uppercase text-teal-600">
+                  {laserActive ? 'Procesando' : 'Esperando láser'}
+                </span>
+              </div>
             </div>
-          )}
-        </div>
+            {/* Cámara opcional (oculta por defecto, se puede expandir) */}
+            <div id="qr-reader" className="w-full" style={{ minHeight: scanning ? '300px' : '0' }}></div>
+          </div>
+        ) : (
+          // ─── Modo admin: cámara tradicional ───
+          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+            <div id="qr-reader" className="w-full" style={{ minHeight: scanning ? '300px' : '0' }}></div>
+            {!scanning && (
+              <div className="p-8 text-center">
+                <QrCode className="mx-auto text-slate-200 mb-3" size={60} />
+                <p className="text-slate-400 text-xs font-bold">Presiona el botón para escanear</p>
+              </div>
+            )}
+          </div>
+        )}
 
-        {/* Scan Button */}
-        <button
-          onClick={scanning ? stopScanner : startScanner}
-          className={`w-full py-4 rounded-2xl font-black uppercase text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg ${
-            scanning
-              ? 'bg-red-500 text-white shadow-red-200'
-              : isOnline
-                ? 'bg-blue-600 text-white shadow-blue-200'
-                : 'bg-amber-500 text-white shadow-amber-200'
-          }`}
-        >
-          {scanning ? (
-            <><X size={18} /> Detener Escáner</>
-          ) : isOnline ? (
-            <><Scan size={18} /> Escanear QR</>
-          ) : (
-            <><Scan size={18} /> Escanear QR (Offline)</>
-          )}
-        </button>
+        {/* Scan Button — solo para admin/supervisor (guardia usa láser) */}
+        {!isGuardiaMode && (
+          <button
+            onClick={scanning ? stopScanner : startScanner}
+            className={`w-full py-4 rounded-2xl font-black uppercase text-sm flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg ${
+              scanning
+                ? 'bg-red-500 text-white shadow-red-200'
+                : isOnline
+                  ? 'bg-blue-600 text-white shadow-blue-200'
+                  : 'bg-amber-500 text-white shadow-amber-200'
+            }`}
+          >
+            {scanning ? (
+              <><X size={18} /> Detener Escáner</>
+            ) : isOnline ? (
+              <><Scan size={18} /> Escanear QR</>
+            ) : (
+              <><Scan size={18} /> Escanear QR (Offline)</>
+            )}
+          </button>
+        )}
+
+        {/* Botón de cámara opcional para guardia (por si el láser falla) */}
+        {isGuardiaMode && (
+          <button
+            onClick={scanning ? stopScanner : startScanner}
+            className="w-full py-3 rounded-2xl font-black uppercase text-xs flex items-center justify-center gap-2 active:scale-95 transition-transform bg-slate-100 text-slate-600 hover:bg-slate-200"
+          >
+            {scanning ? (
+              <><X size={16} /> Detener cámara</>
+            ) : (
+              <><Scan size={16} /> Usar cámara (opcional)</>
+            )}
+          </button>
+        )}
 
         {/* Notes — solo para admin/supervisor, no para guardia */}
         {!isGuardiaMode && (
