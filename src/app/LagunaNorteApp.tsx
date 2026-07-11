@@ -1120,15 +1120,31 @@ function formatDate(ts: number): string {
   return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
 }
 
-function formatDateTime(ts: number | null): string {
+function formatDateTime(ts: number | string | null): string {
   if (!ts) return '—';
   const d = new Date(ts);
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  const hours = String(d.getHours()).padStart(2, '0');
-  const mins = String(d.getMinutes()).padStart(2, '0');
-  return `${day}/${month}/${year} ${hours}:${mins}`;
+  if (isNaN(d.getTime())) return '—';
+  // Forzar zona horaria Chile (America/Santiago) para que la hora mostrada
+  // sea la hora local chilena independientemente de dónde esté el servidor
+  // o del timezone del navegador del usuario.
+  const parts = new Intl.DateTimeFormat('es-CL', {
+    timeZone: 'America/Santiago',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '';
+  const day = get('day');
+  const month = get('month');
+  const year = get('year');
+  const hours = get('hour');
+  const mins = get('minute');
+  // es-CL usa hour12 false → hours puede venir "24" en some platforms; normalizar
+  const h = hours === '24' ? '00' : hours;
+  return `${day}/${month}/${year} ${h}:${mins}`;
 }
 
 function formatDuration(ms: number): string {
@@ -6610,15 +6626,20 @@ function QrScannerView({
       });
       if (res.ok) {
         const data = await res.json();
-        // Remove successfully synced scans from localStorage
-        const syncedIds = (data.results || [])
-          .filter((r: any) => r.success)
-          .map((r: any) => {
-            // Find matching offline scan by code
+        // Remove successfully synced scans from localStorage.
+        // Preferred: use offlineId returned by server (unambiguous);
+        // fallback: match by code (legacy behaviour).
+        const results: Array<{ success: boolean; code?: string; offlineId?: string }> =
+          Array.isArray(data.results) ? data.results : [];
+
+        const syncedIds = results
+          .filter((r) => r.success)
+          .map((r) => {
+            if (r.offlineId) return r.offlineId;
             const match = unsynced.find((s: OfflineScan) => s.code === r.code);
             return match?.id;
           })
-          .filter(Boolean);
+          .filter(Boolean) as string[];
 
         if (syncedIds.length > 0) {
           removeOfflineScans(syncedIds);
