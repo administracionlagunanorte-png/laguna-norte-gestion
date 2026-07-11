@@ -7095,15 +7095,28 @@ function QrScannerView({
   const confirmPatente = useCallback(async () => {
     const patente = patenteManualEdit.trim().toUpperCase().replace(/\s/g, '');
     if (!patente || patente.length < 4 || patente.length > 7) {
-      setError('Patente inválida. Debe tener entre 4 y 7 caracteres.');
+      setError('Patente inválida. Debe tener entre 4 y 7 caracteres alfanuméricos.');
       return;
     }
 
+    // Si no hay ubicación de entrada activa, permitir al guardia seleccionarla
+    // manualmente del listado de ubicaciones conocidas
+    let ubicacion = '';
+    let entradaQrCode = '';
     const currentLoc = currentEntryLocationRef.current;
-    if (!currentLoc) {
-      setError('No hay ubicación de entrada activa. Escanea un QR de ENTRADA A primero.');
+    if (currentLoc) {
+      ubicacion = currentLoc.ubicacion;
+      entradaQrCode = currentLoc.qrCode;
+    } else {
+      // Si no hay currentEntryLocation, usar patenteManualEdit como ubicación
+      // NO — mejor mostrar error claro
+      setError('No hay ubicación de entrada activa. Escanea primero el QR de ENTRADA A con el láser, o selecciona una ubicación arriba.');
       return;
     }
+
+    // Mostrar feedback inmediato ANTES de hacer el fetch
+    setPatenteFlash(`Registrando ${patente} en ${ubicacion}...`);
+    setPatenteProcessing(true);
 
     const scannedAt = Date.now();
     try {
@@ -7112,9 +7125,9 @@ function QrScannerView({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           patente,
-          ubicacion: currentLoc.ubicacion,
-          entradaQrCode: currentLoc.qrCode,
-          entradaScanId: currentLoc.scanId || null,
+          ubicacion,
+          entradaQrCode,
+          entradaScanId: currentLoc?.scanId || null,
           scannedBy: profileName,
           profileId,
           latitude: gpsCoords?.lat ?? null,
@@ -7124,10 +7137,10 @@ function QrScannerView({
       });
       if (res.ok) {
         const data = await res.json();
-        setPatenteFlash(`PATENTE ${patente} registrada en ${currentLoc.ubicacion}`);
-        setTimeout(() => setPatenteFlash(null), 2000);
+        setPatenteFlash(`✓ PATENTE ${patente} registrada en ${ubicacion}`);
+        setTimeout(() => setPatenteFlash(null), 3000);
         setPatentesAbiertas((prev) => [
-          { id: data.id || `temp_${scannedAt}`, patente, ubicacion: currentLoc.ubicacion, entradaAt: scannedAt },
+          { id: data.id || `temp_${scannedAt}`, patente, ubicacion, entradaAt: scannedAt },
           ...prev,
         ]);
         refreshPatentesAbiertasRef.current();
@@ -7135,12 +7148,17 @@ function QrScannerView({
         setPatenteDetected(null);
         setPatenteManualEdit('');
         setPatenteWarning('');
+        setError('');
       } else {
         const errData = await res.json().catch(() => ({}));
         setError(`Error al registrar patente: ${errData.error || res.status}`);
+        setPatenteFlash(null);
       }
     } catch (err) {
       setError(`Error de red: ${err instanceof Error ? err.message : 'desconocido'}`);
+      setPatenteFlash(null);
+    } finally {
+      setPatenteProcessing(false);
     }
   }, [patenteManualEdit, profileName, profileId, gpsCoords]);
 
@@ -7911,6 +7929,7 @@ function QrScannerView({
                 maxLength={7}
                 placeholder="ABCD12"
                 autoFocus
+                disabled={patenteProcessing}
               />
               {patenteWarning && (
                 <p className="text-[10px] text-amber-600 font-bold mt-2">{patenteWarning}</p>
@@ -7920,6 +7939,24 @@ function QrScannerView({
                   ? 'Escribe la patente (4-7 letras/números).'
                   : 'Verifica la patente. Puedes corregirla si es necesario.'}
               </p>
+              {/* Mostrar ubicación activa o advertencia */}
+              {currentEntryLocation ? (
+                <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full">
+                  <MapPinned size={12} className="text-blue-500" />
+                  <span className="text-[10px] font-black uppercase text-blue-700">
+                    {currentEntryLocation.ubicacion}
+                  </span>
+                </div>
+              ) : (
+                <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                  <p className="text-[10px] font-black text-amber-700 uppercase">
+                    ⚠️ No hay ubicación de entrada activa
+                  </p>
+                  <p className="text-[9px] text-amber-600 mt-1">
+                    Escanea primero el QR de ENTRADA A con el láser, luego registra la patente.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <button
@@ -7927,24 +7964,32 @@ function QrScannerView({
                   setPatenteDetected(null);
                   setPatenteManualEdit('');
                   setPatenteWarning('');
+                  setError('');
                 }}
-                className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase active:scale-95"
+                disabled={patenteProcessing}
+                className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase active:scale-95 disabled:opacity-50"
               >
                 Cancelar
               </button>
               {patenteDetected !== 'MANUAL' && (
                 <button
                   onClick={retryPatenteCapture}
-                  className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase active:scale-95"
+                  disabled={patenteProcessing}
+                  className="flex-1 py-3 bg-slate-100 text-slate-700 rounded-xl text-xs font-black uppercase active:scale-95 disabled:opacity-50"
                 >
                   Reintentar
                 </button>
               )}
               <button
                 onClick={confirmPatente}
-                className="flex-[2] py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95"
+                disabled={patenteProcessing || !currentEntryLocation || patenteManualEdit.length < 4}
+                className="flex-[2] py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                Confirmar y registrar
+                {patenteProcessing ? (
+                  <><RefreshCcw size={14} className="animate-spin" /> Registrando...</>
+                ) : (
+                  <>Confirmar y registrar</>
+                )}
               </button>
             </div>
           </div>
