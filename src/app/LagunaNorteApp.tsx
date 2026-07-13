@@ -594,6 +594,7 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
   const createWorkOrder = useCallback(async (data: Partial<WorkOrder>): Promise<WorkOrder | null> => {
     // ─── Prevent double-creation (race condition guard) ───
     if (creatingRef.current) {
+      console.warn('[createWorkOrder] Bloqueado por creatingRef');
       return null;
     }
     creatingRef.current = true;
@@ -603,9 +604,6 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
       const now = Date.now();
       const tempId = data.id || generateUniqueId();
 
-      // ─── Strategy: Let the SERVER assign the otId ───
-      // Send the OT without an otId — the server generates it atomically from the counter
-      // This prevents duplicate otId numbers when multiple requests come in simultaneously
       const newOT: WorkOrder = {
         id: tempId,
         otId: '', // Will be assigned by the server
@@ -622,7 +620,8 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
         photosAfter: data.photosAfter ?? [],
       };
 
-      // Push to API first — server assigns the otId atomically
+      // Push to API — server assigns the otId atomically
+      let apiOk = false;
       try {
         const res = await fetch('/api/workorders', {
           method: 'POST',
@@ -633,43 +632,42 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
           const savedOT = await res.json();
           setApiAvailable(true);
           setLastSync(Date.now());
-          // Use the server-assigned otId
           newOT.otId = savedOT.otId;
           newOT.id = savedOT.id;
-          // Save to state + localStorage with the correct server otId
-          setWorkOrders(prev => {
-            const updated = [newOT, ...prev];
-            writeToLocalStorage(updated);
-            return updated;
-          });
-          return newOT;
+          apiOk = true;
         } else {
+          console.warn('[createWorkOrder] API error:', res.status);
           setApiAvailable(false);
         }
-      } catch {
+      } catch (err) {
+        console.warn('[createWorkOrder] Network error:', err);
         setApiAvailable(false);
       }
 
-      // ─── Offline fallback: generate otId locally ───
-      // Only used if the API is completely unreachable
-      const existingMax = readFromLocalStorage().reduce((max, ot) => {
-        const num = parseInt(ot.otId.replace('OT-', ''), 10);
-        return !isNaN(num) && num > max ? num : max;
-      }, 0);
-      const counter = existingMax + 1;
-      newOT.otId = `OT-${String(counter).padStart(4, '0')}`;
+      // Si la API fallo, generar otId localmente (fallback offline)
+      if (!apiOk) {
+        const existingMax = readFromLocalStorage().reduce((max, ot) => {
+          const num = parseInt(ot.otId.replace('OT-', ''), 10);
+          return !isNaN(num) && num > max ? num : max;
+        }, 0);
+        const counter = existingMax + 1;
+        newOT.otId = `OT-${String(counter).padStart(4, '0')}`;
+        writeCounterToLocalStorage(counter);
+      }
 
-      // Save to state + localStorage for offline use
+      // SIEMPRE guardar en state + localStorage (tanto si API ok como si fallback)
       setWorkOrders(prev => {
         const updated = [newOT, ...prev];
         writeToLocalStorage(updated);
         return updated;
       });
-      writeCounterToLocalStorage(counter);
 
+      // Retornar la OT (nunca null — siempre se guarda en algun lado)
       return newOT;
+    } catch (err) {
+      console.error('[createWorkOrder] Error inesperado:', err);
+      return null;
     } finally {
-      // Always reset the guard, even on error
       creatingRef.current = false;
     }
   }, [fetchWorkOrders, performedBy, profileId]);
