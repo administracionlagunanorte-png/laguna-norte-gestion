@@ -542,8 +542,21 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
       if (!res.ok) throw new Error('API not available');
       const data = await res.json();
       const migrated = Array.isArray(data) ? data.map(migrateWorkOrder) : [];
-      setWorkOrders(migrated);
-      writeToLocalStorage(migrated);
+
+      // NO sobrescribir si hay OTs recién creadas que aún no están en el servidor
+      // (merge: mantener OTs locales que no estén en el servidor)
+      setWorkOrders(prev => {
+        // IDs de OTs que vienen del servidor
+        const serverIds = new Set(migrated.map(o => o.id));
+        // OTs locales que no están en el servidor (recién creadas, < 30s)
+        const now = Date.now();
+        const localOnly = prev.filter(o => !serverIds.has(o.id) && (now - o.createdAt) < 30000);
+        // Merge: OTs del servidor + OTs locales recientes
+        const merged = [...localOnly, ...migrated];
+        writeToLocalStorage(merged);
+        return merged;
+      });
+
       // Sync local counter with max OT from DB to prevent counter reset
       if (migrated.length > 0) {
         const maxNum = migrated.reduce((max, ot) => {
