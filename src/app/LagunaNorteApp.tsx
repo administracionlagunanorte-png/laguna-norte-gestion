@@ -2885,30 +2885,24 @@ function ModalInner({
   };
 
   const handleSave = () => {
-    // Parse activities from text
+    // Parse activities from text (titulo de la OT)
     const parsedActivities = activitiesText.split(',').map(a => a.trim()).filter(Boolean);
-    if (!form.workAreaId) {
-      setValidationError('Selecciona un área de trabajo');
-      return;
-    }
-    if (parsedActivities.length === 0) {
-      setValidationError('Ingresa al menos una actividad');
+
+    // Validacion minima: solo titulo y ubicacion
+    if (parsedActivities.length === 0 && !form.description.trim()) {
+      setValidationError('Ingresa un titulo o descripcion');
       return;
     }
     if (!form.zoneName.trim()) {
-      setValidationError('Ingresa un lugar');
-      return;
-    }
-    if (!form.description.trim()) {
-      setValidationError('La descripción del trabajo es obligatoria');
-      return;
-    }
-    if (form.collaborators.length === 0) {
-      setValidationError('Selecciona al menos un responsable');
+      setValidationError('Ingresa una ubicacion');
       return;
     }
     setValidationError('');
-    onSave({ ...form, activities: parsedActivities });
+    // Si no hay actividades, usar la descripcion como titulo
+    const finalActivities = parsedActivities.length > 0 ? parsedActivities : [form.description.trim()];
+    // Si no hay workAreaId, usar el primero disponible o vacio
+    const finalWorkAreaId = form.workAreaId || (workAreas.length > 0 ? workAreas[0].id : '');
+    onSave({ ...form, activities: finalActivities, workAreaId: finalWorkAreaId });
   };
 
   return (
