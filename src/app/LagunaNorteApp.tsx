@@ -425,9 +425,28 @@ function readFromLocalStorage(): WorkOrder[] {
 
 function writeToLocalStorage(orders: WorkOrder[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+    // NO guardar fotos en localStorage (causa QuotaExceededError)
+    // Solo guardar metadata: id, otId, status, description, zoneName, etc.
+    const lightweight = orders.map(ot => ({
+      ...ot,
+      photosBefore: [],  // Las fotos se cargan desde el servidor cuando se necesita
+      photosAfter: [],
+    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
   } catch (e) {
     console.error('Error al guardar en localStorage:', e);
+    // Si aun asi excede el limite, guardar solo las ultimas 20 OTs
+    try {
+      const lightweight = orders.slice(0, 20).map(ot => ({
+        ...ot,
+        photosBefore: [],
+        photosAfter: [],
+      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
+    } catch {
+      // Ultimo recurso: limpiar localStorage
+      try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    }
   }
 }
 
@@ -633,28 +652,37 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
         photosAfter: data.photosAfter ?? [],
       };
 
-      // Push to API — server assigns the otId atomically
+      // Push to API con 3 reintentos (Aiven a veces satura con 500)
       let apiOk = false;
-      try {
-        const res = await fetch('/api/workorders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...newOT, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
-        });
-        if (res.ok) {
-          const savedOT = await res.json();
-          setApiAvailable(true);
-          setLastSync(Date.now());
-          newOT.otId = savedOT.otId;
-          newOT.id = savedOT.id;
-          apiOk = true;
-        } else {
-          console.warn('[createWorkOrder] API error:', res.status);
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const res = await fetch('/api/workorders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...newOT, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
+          });
+          if (res.ok) {
+            const savedOT = await res.json();
+            setApiAvailable(true);
+            setLastSync(Date.now());
+            newOT.otId = savedOT.otId;
+            newOT.id = savedOT.id;
+            apiOk = true;
+            break;
+          } else {
+            console.warn(`[createWorkOrder] Intento ${attempt}/3 API error:`, res.status);
+            setApiAvailable(false);
+            if (attempt < 3) {
+              await new Promise(r => setTimeout(r, 1000 * attempt));
+            }
+          }
+        } catch (err) {
+          console.warn(`[createWorkOrder] Intento ${attempt}/3 Network error:`, err);
           setApiAvailable(false);
+          if (attempt < 3) {
+            await new Promise(r => setTimeout(r, 1000 * attempt));
+          }
         }
-      } catch (err) {
-        console.warn('[createWorkOrder] Network error:', err);
-        setApiAvailable(false);
       }
 
       // Si la API fallo, generar otId localmente (fallback offline)
@@ -695,28 +723,39 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
       return updated;
     });
 
-    // Push to API — si falla, devolver null para que el caller sepa
-    try {
-      const res = await fetch(`/api/workorders/${data.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
-      });
-      if (res.ok) {
-        setApiAvailable(true);
-        setLastSync(Date.now());
-        // No llamar fetchWorkOrders aquí para evitar requests paralelas
-        return { ...data } as WorkOrder;
-      } else {
-        setApiAvailable(false);
-        console.error('[updateWorkOrder] Server error:', res.status);
-        return null;
+    // Push to API con 3 reintentos (Aiven a veces satura)
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch(`/api/workorders/${data.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...data, _performedBy: performedBy || 'admin', _profileId: profileId || null }),
+        });
+        if (res.ok) {
+          setApiAvailable(true);
+          setLastSync(Date.now());
+          return { ...data } as WorkOrder;
+        } else if (res.status === 500 && attempt < 3) {
+          console.warn(`[updateWorkOrder] Intento ${attempt}/3 falló (500), reintentando...`);
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+          continue;
+        } else {
+          setApiAvailable(false);
+          console.error('[updateWorkOrder] Server error:', res.status);
+          // Igual retornar la OT porque ya se guardó en localStorage
+          return { ...data } as WorkOrder;
+        }
+      } catch (err) {
+        console.warn(`[updateWorkOrder] Intento ${attempt}/3 error de red:`, err);
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+          continue;
+        }
       }
-    } catch (err) {
-      setApiAvailable(false);
-      console.error('[updateWorkOrder] Network error:', err);
-      return null;
     }
+    // Si todos los intentos fallaron, igual retornar la OT (se guardó en localStorage)
+    setApiAvailable(false);
+    return { ...data } as WorkOrder;
   }, []);
 
   const deleteWorkOrder = useCallback(async (id: string): Promise<boolean> => {
