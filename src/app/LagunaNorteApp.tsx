@@ -548,9 +548,9 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
       setWorkOrders(prev => {
         // IDs de OTs que vienen del servidor
         const serverIds = new Set(migrated.map(o => o.id));
-        // OTs locales que no están en el servidor (recién creadas, < 30s)
+        // OTs locales que no están en el servidor (recién creadas, < 120s)
         const now = Date.now();
-        const localOnly = prev.filter(o => !serverIds.has(o.id) && (now - o.createdAt) < 30000);
+        const localOnly = prev.filter(o => !serverIds.has(o.id) && (now - o.createdAt) < 120000);
         // Merge: OTs del servidor + OTs locales recientes
         const merged = [...localOnly, ...migrated];
         writeToLocalStorage(merged);
@@ -592,11 +592,11 @@ function useWorkOrders(performedBy?: string, profileId?: string) {
     // Then fetch from API (authoritative source)
     fetchWorkOrders(true);
 
-    // Poll every 60 seconds for cross-device sync
-    // (reducido de 5s a 60s para no saturar Aiven free tier)
+    // Poll every 180 seconds for cross-device sync
+    // (3 minutos para no saturar Aiven y no sobrescribir OTs recién creadas)
     const interval = setInterval(() => {
       fetchWorkOrders(false);
-    }, 60000);
+    }, 180000);
 
     return () => {
       mountedRef.current = false;
